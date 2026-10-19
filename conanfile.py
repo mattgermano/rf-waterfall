@@ -1,10 +1,23 @@
 import os
 from conan import ConanFile
 from conan.tools.files import copy
+from conan.tools.system.package_manager import Apt
 
 class RfWaterfallRecipe(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
     generators = "PkgConfigDeps", "MesonToolchain"
+
+    def system_requirements(self):
+        apt = Apt(self)
+        apt.install(
+            [
+                "cuda-nvcc-13-4",
+                "cuda-cudart-dev-13-4",
+                "libcufft-dev-13-4",
+            ],
+            update=True,
+            check=True
+        )
 
     def requirements(self):
         self.requires("imgui/1.92.5")
