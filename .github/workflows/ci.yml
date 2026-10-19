@@ -25,5 +25,17 @@ jobs:
       - name: Detect Conan profile
         run: conan profile detect --force
 
+      - name: Install CUDA toolkit
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2604/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-nvcc-13-4 cuda-cudart-dev-13-4 libcufft-dev-13-4
+
+      - name: Add CUDA to PATH
+        run: |
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
+          echo "CUDA_PATH=/usr/local/cuda" >> "$GITHUB_ENV"
+
       - name: Build project
         run: make build
