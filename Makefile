@@ -12,7 +12,7 @@ configure: $(build_dir)/build.ninja
 .PHONY: reconfigure
 reconfigure:
 	rm -r $(build_dir) &> /dev/null || true && \
-	uvx conan install . --output-folder=$(build_dir) --build=missing -s '&:build_type=$(build_type)' && \
+	conan install . --output-folder=$(build_dir) --build=missing -s '&:build_type=$(build_type)' && \
 	. $(build_dir)/conanbuild.sh && \
 	meson setup --native-file $(build_dir)/conan_meson_native.ini $(build_dir) . && \
 	ninja -C $(build_dir) -t compdb > compile_commands.json
