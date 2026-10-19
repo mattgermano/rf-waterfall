@@ -1,0 +1,10 @@
+{
+    "nsight.cuda.languageSupport.provider": "clangd",
+    "editor.formatOnSave": true,
+    "doxdocgen.c.triggerSequence": "//!",
+    "doxdocgen.c.commentPrefix": "//! ",
+    "doxdocgen.c.firstLine": "//!",
+    "doxdocgen.c.lastLine": "//!",
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json",
+}
