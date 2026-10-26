@@ -1,40 +1,80 @@
-// MIT License
+//!
+//! @file main.cpp
+//! @brief Renders an RF waterfall from recorded RF data
+//!
 
-// Copyright (c) 2020-2024 Evan Pezent
-// Copyright (c) 2025-2026 Breno Cunha Queiroz
+// GLFW / OpenGL setup referenced from the implot example:
+// https://github.com/epezent/implot/blob/master/example/main.cpp
 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+#include "sigmf_file.hpp"
 
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
+#include <array>
+#include <cstdlib>
+#include <filesystem>
+#include <format>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
 #include <iostream>
+#include <memory>
+#include <string>
+#include <vector_types.h>
 
 // Callback to handle GLFW errors
 void glfw_error_callback(int error, const char *description) {
   std::cerr << "GLFW Error " << error << ": " << description << '\n';
 }
 
-int main() {
+//!
+//! @brief Opens an I/Q recording
+//!
+//! @param[in] path The path to a SigMF recording
+//! @return The opened file, or nullptr if it couldn't be opened
+//!
+std::unique_ptr<SigmfFile> open_iq_file(const std::string &path) {
+  const std::string extension = std::filesystem::path(path).extension();
+  std::unique_ptr<SigmfFile> iq_file;
+  if (extension == SIGMF_META_EXT || extension == SIGMF_DATA_EXT) {
+    iq_file = std::make_unique<SigmfFile>();
+  } else {
+    std::cerr << std::format("{} is not a {} or {} file\n", path,
+                             SIGMF_META_EXT, SIGMF_DATA_EXT);
+    return nullptr;
+  }
+
+  if (!iq_file->open(path)) {
+    return nullptr;
+  }
+
+  return iq_file;
+}
+
+int main(int argc, char **argv) {
+  if (argc != 2) {
+    std::cerr << std::format("Usage: {} file{}\n", argv[0], SIGMF_META_EXT);
+    return EXIT_FAILURE;
+  }
+
+  const std::unique_ptr<SigmfFile> iq_file = open_iq_file(argv[1]);
+  if (!iq_file) {
+    return EXIT_FAILURE;
+  }
+
+  std::cout << std::format("Center Freq: {} MHz, Sample Rate: {} Sps\n",
+                           iq_file->center_freq_hz() / 1e6,
+                           iq_file->sample_rate_sps());
+
+  // Temporary test to confirm reading some samples from the file
+  std::array<short2, 1024> iq{};
+  iq_file->read(iq.data(), iq.size());
+
+  for (const auto samp : iq) {
+    std::cout << std::format("I: {}, Q: {}\n", samp.x, samp.y);
+  }
+
   // Setup error callback
   glfwSetErrorCallback(glfw_error_callback);
 

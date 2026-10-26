@@ -20,6 +20,7 @@ cuda_args = [cuda.nvcc_arch_flags('13.4', 'Auto')]
 
 rf_waterfall_srcs = files(
   'src/main.cpp',
+  'src/sigmf_file.cpp',
 )
 
 rf_waterfall_cuda_srcs = files(

@@ -28,4 +28,4 @@ format:
 
 .PHONY: tidy
 tidy:
-	run-clang-tidy $(shell find src/ -type f)
+	run-clang-tidy -fix -format $(shell find src/ -type f)
