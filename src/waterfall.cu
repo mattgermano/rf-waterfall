@@ -1,5 +1,6 @@
 #include "waterfall.cuh"
 
+#include <cmath>
 #include <cufft.h>
 #include <numbers>
 
