@@ -22,7 +22,9 @@ rf_waterfall_srcs = files(
   'src/main.cpp',
 )
 
-rf_waterfall_cuda_srcs = files()
+rf_waterfall_cuda_srcs = files(
+  'src/waterfall.cu',
+)
 
 imgui_backends = files(
   'build/bindings/imgui_impl_glfw.cpp',
