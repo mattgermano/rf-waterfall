@@ -34,6 +34,7 @@ imgui_backends = files(
 imgui = dependency('imgui', version: '1.92.5')
 implot = dependency('implot', version: '0.17')
 glfw = dependency('glfw3', version: '3.4')
+nlohmann_json = dependency('nlohmann_json', version: '3.12.0')
 
 executable(
     meson.project_name(),
@@ -43,6 +44,6 @@ executable(
     include_directories: include_directories('build/bindings'),
     implicit_include_directories: false,
     cuda_args: cuda_args,
-    dependencies: [imgui, implot, glfw],
+    dependencies: [imgui, implot, glfw, nlohmann_json],
     install: true
 )

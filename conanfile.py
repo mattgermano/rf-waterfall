@@ -23,6 +23,7 @@ class RfWaterfallRecipe(ConanFile):
         self.requires("imgui/1.92.5")
         self.requires("implot/0.17")
         self.requires("glfw/3.4")
+        self.requires("nlohmann_json/3.12.0")
 
     def build_requirements(self):
         self.tool_requires("meson/[>=1.10.1 <2]")
