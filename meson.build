@@ -16,7 +16,7 @@ project(
 )
 
 cuda = import('unstable-cuda')
-cuda_args = [cuda.nvcc_arch_flags('13.4', 'Auto')]
+cuda_args = [cuda.nvcc_arch_flags('13.4', 'Lovelace')]
 
 rf_waterfall_srcs = files(
   'src/main.cpp',
