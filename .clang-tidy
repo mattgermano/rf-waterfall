@@ -30,7 +30,7 @@ ImplementationFileExtensions:
   - cpp
   - cxx
   - cu
-HeaderFilterRegex: '.*'
+HeaderFilterRegex: '.*src/.*'
 ExcludeHeaderFilterRegex: ''
 FormatStyle:     none
 CheckOptions:    {}

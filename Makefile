@@ -21,3 +21,11 @@ reconfigure:
 build: configure
 	. $(build_dir)/conanbuild.sh && \
 	ninja -C $(build_dir)
+
+.PHONY: format
+format:
+	find src/ -type f -exec clang-format -i {} \;
+
+.PHONY: tidy
+tidy:
+	run-clang-tidy $(shell find src/ -type f)
