@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
 
   // Create window
   GLFWwindow *window =
-      glfwCreateWindow(1200, 800, "ImPlot Example", nullptr, nullptr);
+      glfwCreateWindow(1200, 800, "RF Waterfall", nullptr, nullptr);
   if (!window) {
     std::cerr << "Failed to create GLFW window\n";
     glfwTerminate();
@@ -114,6 +114,9 @@ int main(int argc, char **argv) {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImPlot::CreateContext();
+
+  // Disable ImGUI generating an imgui.ini file
+  ImGui::GetIO().IniFilename = nullptr;
 
   // Setup style
   ImGui::StyleColorsDark();
@@ -130,10 +133,6 @@ int main(int argc, char **argv) {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-
-    // Demo windows
-    ImGui::ShowDemoWindow();
-    ImPlot::ShowDemoWindow();
 
     // Render
     ImGui::Render();
