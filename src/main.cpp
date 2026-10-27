@@ -7,6 +7,7 @@
 // https://github.com/epezent/implot/blob/master/example/main.cpp
 
 #include "sigmf_file.hpp"
+#include "waterfall.cuh"
 
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
@@ -21,11 +22,39 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector_functions.h>
 #include <vector_types.h>
+
+// Colormap used to color the waterfall
+static constexpr ImPlotColormap COLORMAP = ImPlotColormap_Viridis;
 
 // Callback to handle GLFW errors
 void glfw_error_callback(int error, const char *description) {
   std::cerr << "GLFW Error " << error << ": " << description << '\n';
+}
+
+//!
+//! @brief Samples an ImPlot colormap into a lookup table
+//!
+//! @param[in] cmap The ImPlot colormap
+//! @return The colors (RGBA) ordered from the lowest to highest value
+//!
+std::array<uchar4, COLORMAP_SIZE> build_colormap(ImPlotColormap cmap) {
+  std::array<uchar4, COLORMAP_SIZE> colormap{};
+
+  for (int i = 0; i < COLORMAP_SIZE; ++i) {
+    // SampleColormap needs a value normalized between 0 and 1
+    const ImVec4 color = ImPlot::SampleColormap(
+        static_cast<float>(i) / (COLORMAP_SIZE - 1), cmap);
+
+    // Need 4 values to represent red, green, blue, and alpha (RGBA)
+    colormap[i] =
+        make_uchar4(static_cast<unsigned char>(color.x * 255.0f),
+                    static_cast<unsigned char>(color.y * 255.0f),
+                    static_cast<unsigned char>(color.z * 255.0f), 255);
+  }
+
+  return colormap;
 }
 
 //!
@@ -124,6 +153,8 @@ int main(int argc, char **argv) {
   // Setup backend
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init(glsl_version);
+
+  Waterfall::set_colormap(build_colormap(COLORMAP));
 
   // Main loop
   while (!glfwWindowShouldClose(window)) {

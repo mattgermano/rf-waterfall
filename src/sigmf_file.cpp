@@ -1,5 +1,7 @@
 #include "sigmf_file.hpp"
+#include "vector_types.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>

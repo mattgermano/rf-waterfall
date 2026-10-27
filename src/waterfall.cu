@@ -1,8 +1,14 @@
+#include "utilities.hpp"
 #include "waterfall.cuh"
 
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cuComplex.h>
+#include <cuda_runtime.h>
 #include <cufft.h>
 #include <numbers>
+#include <vector_types.h>
 
 // Number of I/Q samples per FFT. This maps to the number of output frequency
 // bins. A higher value produces better frequency resolution at the cost of
@@ -23,6 +29,9 @@ static constexpr float POWER_SCALE = MAGNITUDE_SCALE * MAGNITUDE_SCALE;
 // Prevents taking a log of 0
 static constexpr float MIN_POWER = 1.0e-20f;
 
+// Lookup table that maps a normalized dB value to a color
+__constant__ uchar4 c_colormap[COLORMAP_SIZE]; // NOLINT
+
 //!
 //! @brief Converts a complex int16 input signal to complex floating point and
 //! applies a Hann windowing function.
@@ -35,7 +44,7 @@ static constexpr float MIN_POWER = 1.0e-20f;
 __global__ void convert_and_window(const short2 *__restrict__ input,
                                    cufftComplex *__restrict__ output,
                                    std::size_t num_samps) {
-  std::size_t thread_idx =
+  const std::size_t thread_idx =
       static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
 
   if (thread_idx >= num_samps) {
@@ -43,15 +52,15 @@ __global__ void convert_and_window(const short2 *__restrict__ input,
   }
 
   // Get the sample number within the FFT length
-  int n = static_cast<int>(thread_idx % FFT_SIZE);
+  const int n = static_cast<int>(thread_idx % FFT_SIZE);
 
   // Apply a Hann window which tapers the ends of the signal to 0. This is
   // needed since an FFT assumes a signal is periodic where both ends of the
   // signal are close in value. This is often not the case for a real signal.
   // Reference: https://pysdr.org/content/frequency_domain#windowing
   // Formula: https://en.wikipedia.org/wiki/Window_function#Hann_window
-  float w = 0.5f * (1.0f - std::cosf(2.0f * std::numbers::pi_v<float> *
-                                     static_cast<float>(n) / FFT_SIZE));
+  const float w = 0.5f * (1.0f - std::cosf(2.0f * std::numbers::pi_v<float> *
+                                           static_cast<float>(n) / FFT_SIZE));
 
   // Scale the int16 value to the range -1.0 to 1.0 and multiply by the
   // windowing function
@@ -70,7 +79,7 @@ __global__ void convert_and_window(const short2 *__restrict__ input,
 __global__ void compute_magnitude_db(const cufftComplex *__restrict__ spectrum,
                                      float *__restrict__ magnitude_db,
                                      std::size_t count) {
-  std::size_t thread_idx =
+  const std::size_t thread_idx =
       static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
 
   if (thread_idx >= count) {
@@ -78,10 +87,24 @@ __global__ void compute_magnitude_db(const cufftComplex *__restrict__ spectrum,
   }
 
   // Power is just the real component squared + the imaginary component squared
-  float power = (spectrum[thread_idx].x * spectrum[thread_idx].x +
-                 spectrum[thread_idx].y * spectrum[thread_idx].y) *
-                POWER_SCALE;
+  const float power = (spectrum[thread_idx].x * spectrum[thread_idx].x +
+                       spectrum[thread_idx].y * spectrum[thread_idx].y) *
+                      POWER_SCALE;
   // dB formula is 10log10 of the power
   // https://en.wikipedia.org/wiki/Decibel#Power_quantities
   magnitude_db[thread_idx] = 10.0f * std::log10f(std::fmaxf(power, MIN_POWER));
+}
+
+void Waterfall::set_colormap(
+    const std::array<uchar4, COLORMAP_SIZE> &colormap) {
+  checkCudaErrors(cudaMemcpyToSymbol(c_colormap, colormap.data(),
+                                     colormap.size() * sizeof(uchar4)));
+  for (const auto color : colormap) {
+    // Sanity check:
+    // First value: R: 68, G: 1, B: 84, A: 255 (Deep purple)
+    // Last value: R: 253, G: 231, B: 37, A: 255 (Bright Yellow)
+    // ...this matches the Viridis color map
+    std::cout << std::format("R: {}, G: {}, B: {}, A: {}\n", color.x, color.y,
+                             color.z, color.w);
+  }
 }
