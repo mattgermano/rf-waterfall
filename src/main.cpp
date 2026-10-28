@@ -28,6 +28,13 @@
 // Colormap used to color the waterfall
 static constexpr ImPlotColormap COLORMAP = ImPlotColormap_Viridis;
 
+// Initial range of dB values mapped to the colormap
+static constexpr float DEFAULT_MIN_DB = -90.0f;
+static constexpr float DEFAULT_MAX_DB = -10.0f;
+
+// Width of the colormap scale beside the waterfall in pixels
+static constexpr float COLORMAP_SCALE_WIDTH = 90.0f;
+
 // Callback to handle GLFW errors
 void glfw_error_callback(int error, const char *description) {
   std::cerr << "GLFW Error " << error << ": " << description << '\n';
@@ -55,6 +62,26 @@ std::array<uchar4, COLORMAP_SIZE> build_colormap(ImPlotColormap cmap) {
   }
 
   return colormap;
+}
+
+//!
+//! @brief Draws the controls, spectrum plot and waterfall
+//!
+void draw_ui() {
+  // Fill the entire window
+  // Ref: https://github.com/ocornut/imgui/issues/3541#issuecomment-712248014
+  const ImGuiViewport *viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(viewport->WorkPos);
+  ImGui::SetNextWindowSize(viewport->WorkSize);
+  ImGui::Begin("RF Waterfall");
+
+  // TODO: Will need to dynamically determine the height
+  const float colormap_height = 300.0f;
+  ImPlot::ColormapScale("##scale", DEFAULT_MIN_DB, DEFAULT_MAX_DB,
+                        ImVec2(COLORMAP_SCALE_WIDTH, colormap_height), "%g dB",
+                        ImPlotColormapScaleFlags_None, COLORMAP);
+
+  ImGui::End();
 }
 
 //!
@@ -164,6 +191,8 @@ int main(int argc, char **argv) {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    draw_ui();
 
     // Render
     ImGui::Render();
