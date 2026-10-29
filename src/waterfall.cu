@@ -10,11 +10,6 @@
 #include <numbers>
 #include <vector_types.h>
 
-// Number of I/Q samples per FFT. This maps to the number of output frequency
-// bins. A higher value produces better frequency resolution at the cost of
-// less time resolution.
-static constexpr int FFT_SIZE = 1024;
-
 // Data from a radio is typically received as int16 complex numbers, but FFT's
 // operate on complex floating point numbers. This scaling factor will convert
 // the int16 magnitude to a floating point magnitude between -1.0 and 1.0.

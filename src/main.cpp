@@ -28,6 +28,9 @@
 // Colormap used to color the waterfall
 static constexpr ImPlotColormap COLORMAP = ImPlotColormap_Viridis;
 
+// Fraction of the window height used by the spectrum plot
+static constexpr float SPECTRUM_HEIGHT_RATIO = 0.3f;
+
 // Initial range of dB values mapped to the colormap
 static constexpr float DEFAULT_MIN_DB = -90.0f;
 static constexpr float DEFAULT_MAX_DB = -10.0f;
@@ -67,7 +70,7 @@ std::array<uchar4, COLORMAP_SIZE> build_colormap(ImPlotColormap cmap) {
 //!
 //! @brief Draws the controls, spectrum plot and waterfall
 //!
-void draw_ui() {
+void draw_ui(const SigmfFile &iq_file) {
   // Fill the entire window
   // Ref: https://github.com/ocornut/imgui/issues/3541#issuecomment-712248014
   const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -75,10 +78,57 @@ void draw_ui() {
   ImGui::SetNextWindowSize(viewport->WorkSize);
   ImGui::Begin("RF Waterfall");
 
-  // TODO: Will need to dynamically determine the height
-  const float colormap_height = 300.0f;
+  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  const float plot_width =
+      avail.x - COLORMAP_SCALE_WIDTH - ImGui::GetStyle().ItemSpacing.x;
+  const float spectrum_height = avail.y * SPECTRUM_HEIGHT_RATIO;
+  const float waterfall_height =
+      avail.y - spectrum_height - ImGui::GetStyle().ItemSpacing.y;
+
+  const double bin_width_mhz = iq_file.sample_rate_sps() / FFT_SIZE / 1.0e6;
+  double freq_min_mhz =
+      iq_file.center_freq_hz() / 1.0e6 - 0.5 * FFT_SIZE * bin_width_mhz;
+  double freq_max_mhz =
+      iq_file.center_freq_hz() / 1.0e6 + 0.5 * FFT_SIZE * bin_width_mhz;
+
+  // Spectrum of the latest row
+  if (ImPlot::BeginPlot("##spectrum", ImVec2(plot_width, spectrum_height),
+                        ImPlotFlags_NoLegend)) {
+    ImPlot::SetupAxes("Frequency (MHz)", "Power (dB)");
+    ImPlot::SetupAxisLinks(ImAxis_X1, &freq_min_mhz, &freq_max_mhz);
+    ImPlot::SetupAxisLimits(ImAxis_Y1, DEFAULT_MIN_DB, DEFAULT_MAX_DB,
+                            ImPlotCond_Always);
+    // TODO: Remove dummy data generation
+    std::array<float, FFT_SIZE> points{};
+    for (std::size_t i = 0; i < points.size(); ++i) {
+      points[i] = static_cast<float>(i) *
+                      ((DEFAULT_MAX_DB - DEFAULT_MIN_DB) / FFT_SIZE) +
+                  DEFAULT_MIN_DB;
+    }
+    ImPlot::PlotLine("##magnitude", points.data(), FFT_SIZE, bin_width_mhz,
+                     freq_min_mhz);
+    ImPlot::EndPlot();
+  }
+
+  if (ImPlot::BeginPlot("##waterfall", ImVec2(plot_width, waterfall_height),
+                        ImPlotFlags_NoLegend)) {
+    // TODO: Need to dynamically calculate this
+    const double history_s = 20.0;
+
+    ImPlot::SetupAxes("Frequency (MHz)", "Time (s)");
+    ImPlot::SetupAxisLinks(ImAxis_X1, &freq_min_mhz, &freq_max_mhz);
+    ImPlot::SetupAxisLimits(ImAxis_Y1, -history_s, 0.0, ImPlotCond_Always);
+
+    ImPlot::PlotImage("##image", static_cast<ImTextureID>(0),
+                      ImPlotPoint(freq_min_mhz, -history_s),
+                      ImPlotPoint(freq_max_mhz, 0.0));
+    ImPlot::EndPlot();
+  }
+
+  // Place the colormap beside the waterfall
+  ImGui::SameLine();
   ImPlot::ColormapScale("##scale", DEFAULT_MIN_DB, DEFAULT_MAX_DB,
-                        ImVec2(COLORMAP_SCALE_WIDTH, colormap_height), "%g dB",
+                        ImVec2(COLORMAP_SCALE_WIDTH, waterfall_height), "%g dB",
                         ImPlotColormapScaleFlags_None, COLORMAP);
 
   ImGui::End();
@@ -192,7 +242,7 @@ int main(int argc, char **argv) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    draw_ui();
+    draw_ui(*iq_file);
 
     // Render
     ImGui::Render();

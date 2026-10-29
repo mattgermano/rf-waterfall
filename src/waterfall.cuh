@@ -7,6 +7,11 @@
 #ifndef WATERFALL_CUH
 #define WATERFALL_CUH
 
+// Number of I/Q samples per FFT. This maps to the number of output frequency
+// bins. A higher value produces better frequency resolution at the cost of
+// less time resolution.
+static constexpr int FFT_SIZE = 1024;
+
 // Number of colors in the lookup table used to color each frequency bin
 static constexpr int COLORMAP_SIZE = 256; // 8-bit
 
