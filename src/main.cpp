@@ -11,7 +11,9 @@
 
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
@@ -30,6 +32,13 @@ static constexpr ImPlotColormap COLORMAP = ImPlotColormap_Viridis;
 
 // Fraction of the window height used by the spectrum plot
 static constexpr float SPECTRUM_HEIGHT_RATIO = 0.3f;
+
+// Target number of waterfall rows per second of signal
+static constexpr double ROWS_PER_SECOND = 50.0;
+
+// Limits the rows processed in a single UI frame so the app doesn't fall
+// further behind if a frame is delayed (e.g., while the window is dragged)
+static constexpr int MAX_ROWS_PER_FRAME = 16;
 
 // Initial range of dB values mapped to the colormap
 static constexpr float DEFAULT_MIN_DB = -90.0f;
@@ -70,7 +79,7 @@ std::array<uchar4, COLORMAP_SIZE> build_colormap(ImPlotColormap cmap) {
 //!
 //! @brief Draws the controls, spectrum plot and waterfall
 //!
-void draw_ui(const SigmfFile &iq_file) {
+void draw_ui(const SigmfFile &iq_file, const Waterfall &waterfall) {
   // Fill the entire window
   // Ref: https://github.com/ocornut/imgui/issues/3541#issuecomment-712248014
   const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -105,8 +114,8 @@ void draw_ui(const SigmfFile &iq_file) {
                       ((DEFAULT_MAX_DB - DEFAULT_MIN_DB) / FFT_SIZE) +
                   DEFAULT_MIN_DB;
     }
-    ImPlot::PlotLine("##magnitude", points.data(), FFT_SIZE, bin_width_mhz,
-                     freq_min_mhz);
+    ImPlot::PlotLine("##magnitude", waterfall.magnitude_db(), FFT_SIZE,
+                     bin_width_mhz, freq_min_mhz);
     ImPlot::EndPlot();
   }
 
@@ -231,30 +240,62 @@ int main(int argc, char **argv) {
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init(glsl_version);
 
-  Waterfall::set_colormap(build_colormap(COLORMAP));
+  const int frames_per_row =
+      static_cast<int>(std::max(1L, std::lround(iq_file->sample_rate_sps() /
+                                                (FFT_SIZE * ROWS_PER_SECOND))));
 
-  // Main loop
-  while (!glfwWindowShouldClose(window)) {
-    glfwPollEvents();
+  // Scoped block is so the waterfall is constructed/destructed on each frame
+  {
+    Waterfall waterfall(frames_per_row);
+    Waterfall::set_colormap(build_colormap(COLORMAP));
 
-    // Start frame
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
+    // Number of samples that have elapsed in real time but haven't been
+    // processed yet
+    double pending_samps = 0.0;
+    double last_time = glfwGetTime();
 
-    draw_ui(*iq_file);
+    // Main loop
+    while (!glfwWindowShouldClose(window)) {
+      glfwPollEvents();
 
-    // Render
-    ImGui::Render();
-    int display_w = 0, display_h = 0;
-    glfwGetFramebufferSize(window, &display_w, &display_h);
-    glViewport(0, 0, display_w, display_h);
-    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+      const double now = glfwGetTime();
+      const double elapsed_s = now - last_time;
+      last_time = now;
 
-    // Swap buffers
-    glfwSwapBuffers(window);
+      // Process the samples that would have been received from a radio since
+      // the last frame
+      pending_samps += elapsed_s * iq_file->sample_rate_sps();
+      const auto row_samps = static_cast<double>(waterfall.row_samples());
+      int rows = 0;
+      while (pending_samps >= row_samps && rows < MAX_ROWS_PER_FRAME) {
+        iq_file->read(waterfall.input_buffer(), waterfall.row_samples());
+        waterfall.process_row();
+        pending_samps -= row_samps;
+        ++rows;
+      }
+      if (rows == MAX_ROWS_PER_FRAME) {
+        pending_samps = std::min(pending_samps, row_samps);
+      }
+
+      // Start frame
+      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplGlfw_NewFrame();
+      ImGui::NewFrame();
+
+      draw_ui(*iq_file, waterfall);
+
+      // Render
+      ImGui::Render();
+      int display_w = 0, display_h = 0;
+      glfwGetFramebufferSize(window, &display_w, &display_h);
+      glViewport(0, 0, display_w, display_h);
+      glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+      glClear(GL_COLOR_BUFFER_BIT);
+      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+      // Swap buffers
+      glfwSwapBuffers(window);
+    }
   }
 
   // Cleanup

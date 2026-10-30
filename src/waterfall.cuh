@@ -7,6 +7,9 @@
 #ifndef WATERFALL_CUH
 #define WATERFALL_CUH
 
+#include <cstddef>
+#include <cufft.h>
+
 // Number of I/Q samples per FFT. This maps to the number of output frequency
 // bins. A higher value produces better frequency resolution at the cost of
 // less time resolution.
@@ -17,8 +20,8 @@ static constexpr int COLORMAP_SIZE = 256; // 8-bit
 
 class Waterfall {
 public:
-  Waterfall() = default;
-  ~Waterfall() = default;
+  explicit Waterfall(int frames_per_row);
+  ~Waterfall();
 
   Waterfall(const Waterfall &) = delete;
   Waterfall &operator=(const Waterfall &) = delete;
@@ -31,6 +34,26 @@ public:
   //! @param[in] colormap Colors (RGBA) ordered from the lowest to highest dB
   //!
   static void set_colormap(const std::array<uchar4, COLORMAP_SIZE> &colormap);
+
+  void process_row();
+
+  [[nodiscard]] const float *magnitude_db() const { return m_h_magnitude_db; }
+
+  [[nodiscard]] short2 *input_buffer() const { return m_h_input; }
+
+  [[nodiscard]] std::size_t row_samples() const {
+    return static_cast<std::size_t>(FFT_SIZE) * m_frames_per_row;
+  }
+
+private:
+  cudaStream_t m_stream = nullptr;
+  cufftHandle m_plan = 0;
+  short2 *m_h_input = nullptr;
+  short2 *m_d_input = nullptr;
+  cufftComplex *m_d_spectrum = nullptr;
+  float *m_d_magnitude_db = nullptr;
+  float *m_h_magnitude_db = nullptr;
+  int m_frames_per_row = 0;
 };
 
 #endif

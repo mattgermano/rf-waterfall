@@ -5,21 +5,20 @@
 #include <cmath>
 #include <cstddef>
 #include <cuComplex.h>
+#include <cuda/cmath>
 #include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 #include <cufft.h>
-#include <numbers>
+#include <driver_types.h>
 #include <vector_types.h>
+
+// Number of threads per block for each kernel
+static constexpr int BLOCK_SIZE = 256;
 
 // Data from a radio is typically received as int16 complex numbers, but FFT's
 // operate on complex floating point numbers. This scaling factor will convert
 // the int16 magnitude to a floating point magnitude between -1.0 and 1.0.
 static constexpr float INT16_SCALE = 1.0f / 32767.0f;
-
-// The FFT sums over each sample so it's necessary to divide by the FFT size
-// to restore the original amplitude. Multiplying by 2.0 is needed since the
-// Hann window reduces the peak amplitude by half.
-static constexpr float MAGNITUDE_SCALE = 2.0f / FFT_SIZE;
-static constexpr float POWER_SCALE = MAGNITUDE_SCALE * MAGNITUDE_SCALE;
 
 // Prevents taking a log of 0
 static constexpr float MIN_POWER = 1.0e-20f;
@@ -69,25 +68,74 @@ __global__ void convert_and_window(const short2 *__restrict__ input,
 //!
 //! @param[in]  spectrum      The complex FFT output
 //! @param[out] magnitude_db  The magnitudes of each frequency bin in dB
-//! @param[in]  count         The number of frequency bins
+//! @param[in]  fft_size      The number of frequency bins
+/// @param[in]  num_frames    The number of FFT frames to average
 //!
 __global__ void compute_magnitude_db(const cufftComplex *__restrict__ spectrum,
                                      float *__restrict__ magnitude_db,
-                                     std::size_t count) {
-  const std::size_t thread_idx =
-      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+                                     int fft_size, int num_frames) {
+  const int bin = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
 
-  if (thread_idx >= count) {
+  if (bin >= fft_size) {
     return;
   }
 
-  // Power is just the real component squared + the imaginary component squared
-  const float power = (spectrum[thread_idx].x * spectrum[thread_idx].x +
-                       spectrum[thread_idx].y * spectrum[thread_idx].y) *
-                      POWER_SCALE;
+  // The FFT places 0 Hz at the first bin followed by the positive frequencies
+  // and then the negative frequencies. Need to swap the two halves to put the
+  // frequencies in ascending order (aka an FFT shift).
+  const int src = (bin + fft_size / 2) % fft_size;
+
+  // Power is just the real component squared + the imaginary component
+  // squared. Averaging the power across frames reduces the noise in each row.
+  float power = 0.0f;
+  for (int f = 0; f < num_frames; ++f) {
+    const cufftComplex iq =
+        spectrum[static_cast<std::size_t>(f) * fft_size + src];
+    power += iq.x * iq.x + iq.y * iq.y;
+  }
+
+  // The FFT sums over each sample so it's necessary to divide by the FFT size
+  // to restore the original amplitude. Multiplying by 2.0 is needed since the
+  // Hann window reduces the peak amplitude by half.
+  const float magnitude_scale = 2.0f / static_cast<float>(fft_size);
+  power *= magnitude_scale * magnitude_scale / static_cast<float>(num_frames);
+
   // dB formula is 10log10 of the power
   // https://en.wikipedia.org/wiki/Decibel#Power_quantities
-  magnitude_db[thread_idx] = 10.0f * std::log10f(std::fmaxf(power, MIN_POWER));
+  magnitude_db[bin] = 10.0f * std::log10f(std::fmaxf(power, MIN_POWER));
+}
+
+Waterfall::Waterfall(int frames_per_row) : m_frames_per_row(frames_per_row) {
+  checkCudaErrors(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
+
+  checkCudaErrors(cudaMallocHost(&m_h_input, row_samples() * sizeof(short2)));
+  checkCudaErrors(cudaMallocHost(&m_h_magnitude_db, FFT_SIZE * sizeof(float)));
+  checkCudaErrors(cudaMalloc(&m_d_input, row_samples() * sizeof(short2)));
+  checkCudaErrors(
+      cudaMalloc(&m_d_spectrum, row_samples() * sizeof(cufftComplex)));
+  checkCudaErrors(cudaMalloc(&m_d_magnitude_db, FFT_SIZE * sizeof(float)));
+  checkCufftErrors(cufftPlan1d(&m_plan, FFT_SIZE, CUFFT_C2C, frames_per_row));
+  checkCufftErrors(cufftSetStream(m_plan, m_stream));
+
+  // TODO: create OpenGL texture
+}
+
+Waterfall::~Waterfall() {
+  checkCudaErrors(cudaStreamSynchronize(m_stream));
+  checkCufftErrors(cufftDestroy(m_plan));
+  checkCudaErrors(cudaFreeHost(m_h_input));
+  checkCudaErrors(cudaFreeHost(m_h_magnitude_db));
+  checkCudaErrors(cudaFree(m_d_input));
+  checkCudaErrors(cudaFree(m_d_spectrum));
+  checkCudaErrors(cudaFree(m_d_magnitude_db));
+  m_plan = 0;
+  m_h_input = nullptr;
+  m_h_magnitude_db = nullptr;
+  m_d_input = nullptr;
+  m_d_spectrum = nullptr;
+  m_d_magnitude_db = nullptr;
+
+  checkCudaErrors(cudaStreamDestroy(m_stream));
 }
 
 void Waterfall::set_colormap(
@@ -102,4 +150,38 @@ void Waterfall::set_colormap(
     std::cout << std::format("R: {}, G: {}, B: {}, A: {}\n", color.x, color.y,
                              color.z, color.w);
   }
+}
+
+void Waterfall::process_row() {
+  const dim3 block(BLOCK_SIZE);
+  const dim3 sample_grid(static_cast<unsigned int>(
+      cuda::ceil_div(row_samples(), static_cast<std::size_t>(BLOCK_SIZE))));
+  const dim3 bin_grid(
+      static_cast<unsigned int>(cuda::ceil_div(FFT_SIZE, BLOCK_SIZE)));
+
+  // Copy the samples to the device
+  checkCudaErrors(cudaMemcpyAsync(m_d_input, m_h_input,
+                                  row_samples() * sizeof(short2),
+                                  cudaMemcpyHostToDevice, m_stream));
+
+  // Convert the signal to floating point and apply windowing function
+  convert_and_window<<<sample_grid, block, 0, m_stream>>>(
+      m_d_input, m_d_spectrum, row_samples());
+  checkCudaErrors(cudaGetLastError());
+
+  // Execute the FFT on each frame in the row
+  checkCufftErrors(
+      cufftExecC2C(m_plan, m_d_spectrum, m_d_spectrum, CUFFT_FORWARD));
+
+  // Average the frames and convert each frequency bin to dB
+  compute_magnitude_db<<<bin_grid, block, 0, m_stream>>>(
+      m_d_spectrum, m_d_magnitude_db, FFT_SIZE, m_frames_per_row);
+  checkCudaErrors(cudaGetLastError());
+
+  // TODO: Apply colormap to OpenGL texture
+
+  // Copy the dB magnitudes from the device to the host for the spectrum plot
+  checkCudaErrors(cudaMemcpyAsync(m_h_magnitude_db, m_d_magnitude_db,
+                                  FFT_SIZE * sizeof(float),
+                                  cudaMemcpyDeviceToHost, m_stream));
 }
