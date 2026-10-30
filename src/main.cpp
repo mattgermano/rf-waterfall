@@ -107,13 +107,6 @@ void draw_ui(const SigmfFile &iq_file, const Waterfall &waterfall) {
     ImPlot::SetupAxisLinks(ImAxis_X1, &freq_min_mhz, &freq_max_mhz);
     ImPlot::SetupAxisLimits(ImAxis_Y1, DEFAULT_MIN_DB, DEFAULT_MAX_DB,
                             ImPlotCond_Always);
-    // TODO: Remove dummy data generation
-    std::array<float, FFT_SIZE> points{};
-    for (std::size_t i = 0; i < points.size(); ++i) {
-      points[i] = static_cast<float>(i) *
-                      ((DEFAULT_MAX_DB - DEFAULT_MIN_DB) / FFT_SIZE) +
-                  DEFAULT_MIN_DB;
-    }
     ImPlot::PlotLine("##magnitude", waterfall.magnitude_db(), FFT_SIZE,
                      bin_width_mhz, freq_min_mhz);
     ImPlot::EndPlot();
