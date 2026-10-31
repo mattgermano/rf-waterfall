@@ -47,6 +47,11 @@ static constexpr float DEFAULT_MAX_DB = -10.0f;
 // Width of the colormap scale beside the waterfall in pixels
 static constexpr float COLORMAP_SCALE_WIDTH = 90.0f;
 
+// State shared between the processing loop and the user interface
+struct AppState {
+  bool paused = false;
+};
+
 // Callback to handle GLFW errors
 void glfw_error_callback(int error, const char *description) {
   std::cerr << "GLFW Error " << error << ": " << description << '\n';
@@ -79,13 +84,18 @@ std::array<uchar4, COLORMAP_SIZE> build_colormap(ImPlotColormap cmap) {
 //!
 //! @brief Draws the controls, spectrum plot and waterfall
 //!
-void draw_ui(const SigmfFile &iq_file, const Waterfall &waterfall) {
+void draw_ui(const SigmfFile &iq_file, const Waterfall &waterfall,
+             AppState &state) {
   // Fill the entire window
   // Ref: https://github.com/ocornut/imgui/issues/3541#issuecomment-712248014
   const ImGuiViewport *viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->WorkPos);
   ImGui::SetNextWindowSize(viewport->WorkSize);
   ImGui::Begin("RF Waterfall");
+
+  if (ImGui::Button(state.paused ? "Play" : "Pause", ImVec2(60.0f, 0.0f))) {
+    state.paused = !state.paused;
+  }
 
   const ImVec2 avail = ImGui::GetContentRegionAvail();
   const float plot_width =
@@ -240,6 +250,7 @@ int main(int argc, char **argv) {
   // Scoped block is so the waterfall is constructed/destructed on each frame
   {
     Waterfall waterfall(frames_per_row);
+    AppState state;
     Waterfall::set_colormap(build_colormap(COLORMAP));
 
     // Number of samples that have elapsed in real time but haven't been
@@ -257,17 +268,19 @@ int main(int argc, char **argv) {
 
       // Process the samples that would have been received from a radio since
       // the last frame
-      pending_samps += elapsed_s * iq_file->sample_rate_sps();
-      const auto row_samps = static_cast<double>(waterfall.row_samples());
-      int rows = 0;
-      while (pending_samps >= row_samps && rows < MAX_ROWS_PER_FRAME) {
-        iq_file->read(waterfall.input_buffer(), waterfall.row_samples());
-        waterfall.process_row();
-        pending_samps -= row_samps;
-        ++rows;
-      }
-      if (rows == MAX_ROWS_PER_FRAME) {
-        pending_samps = std::min(pending_samps, row_samps);
+      if (!state.paused) {
+        pending_samps += elapsed_s * iq_file->sample_rate_sps();
+        const auto row_samps = static_cast<double>(waterfall.row_samples());
+        int rows = 0;
+        while (pending_samps >= row_samps && rows < MAX_ROWS_PER_FRAME) {
+          iq_file->read(waterfall.input_buffer(), waterfall.row_samples());
+          waterfall.process_row();
+          pending_samps -= row_samps;
+          ++rows;
+        }
+        if (rows == MAX_ROWS_PER_FRAME) {
+          pending_samps = std::min(pending_samps, row_samps);
+        }
       }
 
       // Start frame
@@ -275,7 +288,7 @@ int main(int argc, char **argv) {
       ImGui_ImplGlfw_NewFrame();
       ImGui::NewFrame();
 
-      draw_ui(*iq_file, waterfall);
+      draw_ui(*iq_file, waterfall, state);
 
       // Render
       ImGui::Render();
