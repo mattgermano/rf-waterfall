@@ -7,8 +7,12 @@
 #ifndef WATERFALL_CUH
 #define WATERFALL_CUH
 
+#include <GL/gl.h>
 #include <cstddef>
 #include <cufft.h>
+
+// Number of rows in the waterfall texture
+static constexpr int HISTORY_ROWS = 1024;
 
 // Number of I/Q samples per FFT. This maps to the number of output frequency
 // bins. A higher value produces better frequency resolution at the cost of
@@ -53,6 +57,8 @@ private:
   cufftComplex *m_d_spectrum = nullptr;
   float *m_d_magnitude_db = nullptr;
   float *m_h_magnitude_db = nullptr;
+  GLuint m_texture = 0;
+  cudaGraphicsResource_t m_texture_resource = nullptr;
   int m_frames_per_row = 0;
 };
 

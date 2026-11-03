@@ -6,10 +6,12 @@
 #include <cstddef>
 #include <cuComplex.h>
 #include <cuda/cmath>
+#include <cuda_gl_interop.h>
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
 #include <cufft.h>
 #include <driver_types.h>
+#include <vector>
 #include <vector_types.h>
 
 // Number of threads per block for each kernel
@@ -105,6 +107,8 @@ __global__ void compute_magnitude_db(const cufftComplex *__restrict__ spectrum,
   magnitude_db[bin] = 10.0f * std::log10f(std::fmaxf(power, MIN_POWER));
 }
 
+__global__ void apply_colormap() {}
+
 Waterfall::Waterfall(int frames_per_row) : m_frames_per_row(frames_per_row) {
   checkCudaErrors(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
 
@@ -117,17 +121,35 @@ Waterfall::Waterfall(int frames_per_row) : m_frames_per_row(frames_per_row) {
   checkCufftErrors(cufftPlan1d(&m_plan, FFT_SIZE, CUFFT_C2C, frames_per_row));
   checkCufftErrors(cufftSetStream(m_plan, m_stream));
 
-  // TODO: create OpenGL texture
+  // Start with an empty waterfall
+  std::vector<uchar4> blank(static_cast<std::size_t>(FFT_SIZE) * HISTORY_ROWS,
+                            make_uchar4(0, 0, 0, 255));
+
+  glGenTextures(1, &m_texture);
+  glBindTexture(GL_TEXTURE_2D, m_texture);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, FFT_SIZE, HISTORY_ROWS, 0, GL_RGBA,
+               GL_UNSIGNED_BYTE, blank.data());
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  // Register the texture with CUDA so the kernels can write to it directly
+  // without copying through the host
+  checkCudaErrors(
+      cudaGraphicsGLRegisterImage(&m_texture_resource, m_texture, GL_TEXTURE_2D,
+                                  cudaGraphicsRegisterFlagsSurfaceLoadStore));
 }
 
 Waterfall::~Waterfall() {
   checkCudaErrors(cudaStreamSynchronize(m_stream));
+  checkCudaErrors(cudaGraphicsUnregisterResource(m_texture_resource));
+  glDeleteTextures(1, &m_texture);
   checkCufftErrors(cufftDestroy(m_plan));
   checkCudaErrors(cudaFreeHost(m_h_input));
   checkCudaErrors(cudaFreeHost(m_h_magnitude_db));
   checkCudaErrors(cudaFree(m_d_input));
   checkCudaErrors(cudaFree(m_d_spectrum));
   checkCudaErrors(cudaFree(m_d_magnitude_db));
+  m_texture_resource = nullptr;
+  m_texture = 0;
   m_plan = 0;
   m_h_input = nullptr;
   m_h_magnitude_db = nullptr;
@@ -178,10 +200,27 @@ void Waterfall::process_row() {
       m_d_spectrum, m_d_magnitude_db, FFT_SIZE, m_frames_per_row);
   checkCudaErrors(cudaGetLastError());
 
-  // TODO: Apply colormap to OpenGL texture
+  // Map the texture into CUDA
+  checkCudaErrors(cudaGraphicsMapResources(1, &m_texture_resource, m_stream));
+  cudaArray_t texture_array = nullptr;
+  checkCudaErrors(cudaGraphicsSubResourceGetMappedArray(
+      &texture_array, m_texture_resource, 0, 0));
+
+  cudaResourceDesc resource_desc{};
+  resource_desc.resType = cudaResourceTypeArray;
+  resource_desc.res.array.array = texture_array;
+  cudaSurfaceObject_t surface = 0;
+  // Need to use a surface object since it is writable
+  checkCudaErrors(cudaCreateSurfaceObject(&surface, &resource_desc));
+
+  // TODO: Run colormap kernel
+  checkCudaErrors(cudaGraphicsUnmapResources(1, &m_texture_resource, m_stream));
 
   // Copy the dB magnitudes from the device to the host for the spectrum plot
   checkCudaErrors(cudaMemcpyAsync(m_h_magnitude_db, m_d_magnitude_db,
                                   FFT_SIZE * sizeof(float),
                                   cudaMemcpyDeviceToHost, m_stream));
+
+  checkCudaErrors(cudaStreamSynchronize(m_stream));
+  checkCudaErrors(cudaDestroySurfaceObject(surface));
 }
