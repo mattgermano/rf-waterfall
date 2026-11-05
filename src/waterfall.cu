@@ -107,7 +107,33 @@ __global__ void compute_magnitude_db(const cufftComplex *__restrict__ spectrum,
   magnitude_db[bin] = 10.0f * std::log10f(std::fmaxf(power, MIN_POWER));
 }
 
-__global__ void apply_colormap() {}
+//!
+//! @brief Maps the magnitude of each frequency bin to a color and writes it to
+//! a row of the waterfall texture.
+//!
+//! @param[in]  magnitude_db The magnitude of each frequency bin in dB
+//! @param[out] surface      The surface of the waterfall texture
+//! @param[in]  fft_size     The number of frequency bins
+//! @param[in]  row          The texture row to write
+//! @param[in]  min_db       The dB value mapped to the lowest color
+//! @param[in]  db_range     The range of dB values mapped to colors
+//!
+__global__ void apply_colormap(const float *__restrict__ magnitude_db,
+                               cudaSurfaceObject_t surface, int fft_size,
+                               int row, float min_db, float db_range) {
+  int bin = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+
+  if (bin >= fft_size) {
+    return;
+  }
+
+  // Normalize the magnitude to the range 0.0 to 1.0 and look up its color
+  float t = __saturatef((magnitude_db[bin] - min_db) / db_range);
+  int color_idx = __float2int_rn(t * (COLORMAP_SIZE - 1));
+
+  surf2Dwrite(c_colormap[color_idx], surface,
+              static_cast<int>(bin * sizeof(uchar4)), row);
+}
 
 Waterfall::Waterfall(int frames_per_row) : m_frames_per_row(frames_per_row) {
   checkCudaErrors(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
@@ -127,6 +153,7 @@ Waterfall::Waterfall(int frames_per_row) : m_frames_per_row(frames_per_row) {
 
   glGenTextures(1, &m_texture);
   glBindTexture(GL_TEXTURE_2D, m_texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, FFT_SIZE, HISTORY_ROWS, 0, GL_RGBA,
                GL_UNSIGNED_BYTE, blank.data());
   glBindTexture(GL_TEXTURE_2D, 0);
@@ -174,7 +201,7 @@ void Waterfall::set_colormap(
   }
 }
 
-void Waterfall::process_row() {
+void Waterfall::process_row(float min_db, float max_db) {
   const dim3 block(BLOCK_SIZE);
   const dim3 sample_grid(static_cast<unsigned int>(
       cuda::ceil_div(row_samples(), static_cast<std::size_t>(BLOCK_SIZE))));
@@ -200,6 +227,9 @@ void Waterfall::process_row() {
       m_d_spectrum, m_d_magnitude_db, FFT_SIZE, m_frames_per_row);
   checkCudaErrors(cudaGetLastError());
 
+  // Draw the newest row at the top
+  m_head_row = (m_head_row + HISTORY_ROWS - 1) % HISTORY_ROWS;
+
   // Map the texture into CUDA
   checkCudaErrors(cudaGraphicsMapResources(1, &m_texture_resource, m_stream));
   cudaArray_t texture_array = nullptr;
@@ -213,7 +243,11 @@ void Waterfall::process_row() {
   // Need to use a surface object since it is writable
   checkCudaErrors(cudaCreateSurfaceObject(&surface, &resource_desc));
 
-  // TODO: Run colormap kernel
+  const float db_range = std::fmaxf(max_db - min_db, 1.0e-3f);
+  apply_colormap<<<bin_grid, block, 0, m_stream>>>(
+      m_d_magnitude_db, surface, FFT_SIZE, m_head_row, min_db, db_range);
+  checkCudaErrors(cudaGetLastError());
+
   checkCudaErrors(cudaGraphicsUnmapResources(1, &m_texture_resource, m_stream));
 
   // Copy the dB magnitudes from the device to the host for the spectrum plot

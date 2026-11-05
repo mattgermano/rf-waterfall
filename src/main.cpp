@@ -97,6 +97,10 @@ void draw_ui(const SigmfFile &iq_file, const Waterfall &waterfall,
     state.paused = !state.paused;
   }
 
+  const double row_duration_s =
+      static_cast<double>(waterfall.row_samples()) / iq_file.sample_rate_sps();
+  const double history_s = row_duration_s * HISTORY_ROWS;
+
   const ImVec2 avail = ImGui::GetContentRegionAvail();
   const float plot_width =
       avail.x - COLORMAP_SCALE_WIDTH - ImGui::GetStyle().ItemSpacing.x;
@@ -124,16 +128,16 @@ void draw_ui(const SigmfFile &iq_file, const Waterfall &waterfall,
 
   if (ImPlot::BeginPlot("##waterfall", ImVec2(plot_width, waterfall_height),
                         ImPlotFlags_NoLegend)) {
-    // TODO: Need to dynamically calculate this
-    const double history_s = 20.0;
-
     ImPlot::SetupAxes("Frequency (MHz)", "Time (s)");
     ImPlot::SetupAxisLinks(ImAxis_X1, &freq_min_mhz, &freq_max_mhz);
     ImPlot::SetupAxisLimits(ImAxis_Y1, -history_s, 0.0, ImPlotCond_Always);
 
-    ImPlot::PlotImage("##image", static_cast<ImTextureID>(0),
+    const float v_start = static_cast<float>(waterfall.head_row()) /
+                          static_cast<float>(HISTORY_ROWS);
+    ImPlot::PlotImage("##image", static_cast<ImTextureID>(waterfall.texture()),
                       ImPlotPoint(freq_min_mhz, -history_s),
-                      ImPlotPoint(freq_max_mhz, 0.0));
+                      ImPlotPoint(freq_max_mhz, 0.0), ImVec2(0.0f, v_start),
+                      ImVec2(1.0f, v_start + 1.0f));
     ImPlot::EndPlot();
   }
 
@@ -274,7 +278,7 @@ int main(int argc, char **argv) {
         int rows = 0;
         while (pending_samps >= row_samps && rows < MAX_ROWS_PER_FRAME) {
           iq_file->read(waterfall.input_buffer(), waterfall.row_samples());
-          waterfall.process_row();
+          waterfall.process_row(DEFAULT_MIN_DB, DEFAULT_MAX_DB);
           pending_samps -= row_samps;
           ++rows;
         }

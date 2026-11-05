@@ -39,7 +39,7 @@ public:
   //!
   static void set_colormap(const std::array<uchar4, COLORMAP_SIZE> &colormap);
 
-  void process_row();
+  void process_row(float min_db, float max_db);
 
   [[nodiscard]] const float *magnitude_db() const { return m_h_magnitude_db; }
 
@@ -48,6 +48,10 @@ public:
   [[nodiscard]] std::size_t row_samples() const {
     return static_cast<std::size_t>(FFT_SIZE) * m_frames_per_row;
   }
+
+  [[nodiscard]] GLuint texture() const { return m_texture; }
+
+  [[nodiscard]] int head_row() const { return m_head_row; }
 
 private:
   cudaStream_t m_stream = nullptr;
@@ -60,6 +64,7 @@ private:
   GLuint m_texture = 0;
   cudaGraphicsResource_t m_texture_resource = nullptr;
   int m_frames_per_row = 0;
+  int m_head_row = 0;
 };
 
 #endif
