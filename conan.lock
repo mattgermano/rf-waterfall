@@ -1,0 +1,17 @@
+{
+    "version": "0.5",
+    "requires": [
+        "xorg/system#87ea3cbfa907ff490f4ece2f5fa3dbb9%1781197504.821",
+        "opengl/system#cfcf523b9d2bad75cbf377f56562634c%1762526044.744",
+        "nlohmann_json/3.12.0#2d634ab0ec8d9f56353e5ccef6d6612c%1744735883.94",
+        "implot/0.17#80b5196f25b04670c0be8ac1d5412514%1771447601.695",
+        "imgui/1.92.5#6d66a723d1a0358ceea86f3099b54355%1773049063.805",
+        "glfw/3.4#41cc24c744dc4c80571f5dd10dcd9cda%1732635892.515"
+    ],
+    "build_requires": [
+        "ninja/1.13.2#c8c5dc2a52ed6e4e42a66d75b4717ceb%1764096931.974",
+        "meson/1.10.2#9d2d10681fe7fe61c788c58626c89b25%1775558003.754"
+    ],
+    "python_requires": [],
+    "config_requires": []
+}
