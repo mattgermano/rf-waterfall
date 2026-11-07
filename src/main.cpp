@@ -189,14 +189,6 @@ int main(int argc, char **argv) {
                            iq_file->center_freq_hz() / 1e6,
                            iq_file->sample_rate_sps());
 
-  // Temporary test to confirm reading some samples from the file
-  std::array<short2, 1024> iq{};
-  iq_file->read(iq.data(), iq.size());
-
-  for (const auto samp : iq) {
-    std::cout << std::format("I: {}, Q: {}\n", samp.x, samp.y);
-  }
-
   // Setup error callback
   glfwSetErrorCallback(glfw_error_callback);
 

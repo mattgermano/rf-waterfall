@@ -191,14 +191,6 @@ void Waterfall::set_colormap(
     const std::array<uchar4, COLORMAP_SIZE> &colormap) {
   checkCudaErrors(cudaMemcpyToSymbol(c_colormap, colormap.data(),
                                      colormap.size() * sizeof(uchar4)));
-  for (const auto color : colormap) {
-    // Sanity check:
-    // First value: R: 68, G: 1, B: 84, A: 255 (Deep purple)
-    // Last value: R: 253, G: 231, B: 37, A: 255 (Bright Yellow)
-    // ...this matches the Viridis color map
-    std::cout << std::format("R: {}, G: {}, B: {}, A: {}\n", color.x, color.y,
-                             color.z, color.w);
-  }
 }
 
 void Waterfall::process_row(float min_db, float max_db) {
