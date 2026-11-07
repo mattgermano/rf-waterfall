@@ -27,11 +27,15 @@
 #include <vector_functions.h>
 #include <vector_types.h>
 
+// Selectable number of samples per FFT
+static constexpr std::array<int, 7> FFT_SIZES = {256,  512,  1024, 2048,
+                                                 4096, 8192, 16384};
+static constexpr std::array<const char *, FFT_SIZES.size()> FFT_SIZE_LABELS = {
+    "256", "512", "1024", "2048", "4096", "8192", "16384"};
+static constexpr int DEFAULT_FFT_SIZE_IDX = 2;
+
 // Colormap used to color the waterfall
 static constexpr ImPlotColormap COLORMAP = ImPlotColormap_Viridis;
-
-// Fraction of the window height used by the spectrum plot
-static constexpr float SPECTRUM_HEIGHT_RATIO = 0.3f;
 
 // Target number of waterfall rows per second of signal
 static constexpr double ROWS_PER_SECOND = 50.0;
@@ -44,12 +48,27 @@ static constexpr int MAX_ROWS_PER_FRAME = 16;
 static constexpr float DEFAULT_MIN_DB = -90.0f;
 static constexpr float DEFAULT_MAX_DB = -10.0f;
 
+// Fraction of the window height used by the spectrum plot
+static constexpr float SPECTRUM_HEIGHT_RATIO = 0.3f;
+
 // Width of the colormap scale beside the waterfall in pixels
 static constexpr float COLORMAP_SCALE_WIDTH = 90.0f;
 
 // State shared between the processing loop and the user interface
 struct AppState {
+  int fft_size_idx = DEFAULT_FFT_SIZE_IDX;
+  float min_db = DEFAULT_MIN_DB;
+  float max_db = DEFAULT_MAX_DB;
   bool paused = false;
+  // Frequency of the first bin and the spacing between bins in MHz
+  double first_bin_mhz = 0.0;
+  double bin_width_mhz = 0.0;
+  // Frequency range covered by the waterfall texture in MHz
+  double image_min_mhz = 0.0;
+  double image_max_mhz = 0.0;
+  // Frequency axis limits shared by the spectrum and waterfall plots
+  double freq_min_mhz = 0.0;
+  double freq_max_mhz = 0.0;
 };
 
 // Callback to handle GLFW errors
@@ -82,10 +101,36 @@ std::array<uchar4, COLORMAP_SIZE> build_colormap(ImPlotColormap cmap) {
 }
 
 //!
+//! @brief Configures the waterfall for the selected FFT size
+//!
+//! @param[in]     iq_file   The input file
+//! @param[in,out] waterfall The waterfall to configure
+//! @param[in,out] state     The application state
+//!
+void configure_waterfall(const SigmfFile &iq_file, Waterfall &waterfall,
+                         AppState &state) {
+  const int fft_size = FFT_SIZES[state.fft_size_idx];
+  const double sample_rate = iq_file.sample_rate_sps();
+
+  const int frames_per_row = static_cast<int>(
+      std::max(1L, std::lround(sample_rate / (fft_size * ROWS_PER_SECOND))));
+  waterfall.configure(fft_size, frames_per_row);
+
+  state.bin_width_mhz = sample_rate / fft_size / 1.0e6;
+  state.first_bin_mhz =
+      iq_file.center_freq_hz() / 1.0e6 - 0.5 * fft_size * state.bin_width_mhz;
+
+  state.image_min_mhz = state.first_bin_mhz - state.bin_width_mhz / 2.0;
+  state.image_max_mhz =
+      state.first_bin_mhz + (fft_size - 0.5) * state.bin_width_mhz;
+  state.freq_min_mhz = state.image_min_mhz;
+  state.freq_max_mhz = state.image_max_mhz;
+}
+
+//!
 //! @brief Draws the controls, spectrum plot and waterfall
 //!
-void draw_ui(const SigmfFile &iq_file, const Waterfall &waterfall,
-             AppState &state) {
+void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
   // Fill the entire window
   // Ref: https://github.com/ocornut/imgui/issues/3541#issuecomment-712248014
   const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -95,6 +140,13 @@ void draw_ui(const SigmfFile &iq_file, const Waterfall &waterfall,
 
   if (ImGui::Button(state.paused ? "Play" : "Pause", ImVec2(60.0f, 0.0f))) {
     state.paused = !state.paused;
+  }
+
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(100.0f);
+  if (ImGui::Combo("FFT Size", &state.fft_size_idx, FFT_SIZE_LABELS.data(),
+                   static_cast<int>(FFT_SIZE_LABELS.size()))) {
+    configure_waterfall(iq_file, waterfall, state);
   }
 
   const double row_duration_s =
@@ -108,42 +160,37 @@ void draw_ui(const SigmfFile &iq_file, const Waterfall &waterfall,
   const float waterfall_height =
       avail.y - spectrum_height - ImGui::GetStyle().ItemSpacing.y;
 
-  const double bin_width_mhz = iq_file.sample_rate_sps() / FFT_SIZE / 1.0e6;
-  double freq_min_mhz =
-      iq_file.center_freq_hz() / 1.0e6 - 0.5 * FFT_SIZE * bin_width_mhz;
-  double freq_max_mhz =
-      iq_file.center_freq_hz() / 1.0e6 + 0.5 * FFT_SIZE * bin_width_mhz;
-
   // Spectrum of the latest row
   if (ImPlot::BeginPlot("##spectrum", ImVec2(plot_width, spectrum_height),
                         ImPlotFlags_NoLegend)) {
     ImPlot::SetupAxes("Frequency (MHz)", "Power (dB)");
-    ImPlot::SetupAxisLinks(ImAxis_X1, &freq_min_mhz, &freq_max_mhz);
-    ImPlot::SetupAxisLimits(ImAxis_Y1, DEFAULT_MIN_DB, DEFAULT_MAX_DB,
+    ImPlot::SetupAxisLinks(ImAxis_X1, &state.freq_min_mhz, &state.freq_max_mhz);
+    ImPlot::SetupAxisLimits(ImAxis_Y1, state.min_db, state.max_db,
                             ImPlotCond_Always);
-    ImPlot::PlotLine("##magnitude", waterfall.magnitude_db(), FFT_SIZE,
-                     bin_width_mhz, freq_min_mhz);
+    ImPlot::PlotLine("##magnitude", waterfall.magnitude_db(),
+                     waterfall.fft_size(), state.bin_width_mhz,
+                     state.first_bin_mhz);
     ImPlot::EndPlot();
   }
 
   if (ImPlot::BeginPlot("##waterfall", ImVec2(plot_width, waterfall_height),
                         ImPlotFlags_NoLegend)) {
     ImPlot::SetupAxes("Frequency (MHz)", "Time (s)");
-    ImPlot::SetupAxisLinks(ImAxis_X1, &freq_min_mhz, &freq_max_mhz);
+    ImPlot::SetupAxisLinks(ImAxis_X1, &state.freq_min_mhz, &state.freq_max_mhz);
     ImPlot::SetupAxisLimits(ImAxis_Y1, -history_s, 0.0, ImPlotCond_Always);
 
     const float v_start = static_cast<float>(waterfall.head_row()) /
                           static_cast<float>(HISTORY_ROWS);
     ImPlot::PlotImage("##image", static_cast<ImTextureID>(waterfall.texture()),
-                      ImPlotPoint(freq_min_mhz, -history_s),
-                      ImPlotPoint(freq_max_mhz, 0.0), ImVec2(0.0f, v_start),
-                      ImVec2(1.0f, v_start + 1.0f));
+                      ImPlotPoint(state.image_min_mhz, -history_s),
+                      ImPlotPoint(state.image_max_mhz, 0.0),
+                      ImVec2(0.0f, v_start), ImVec2(1.0f, v_start + 1.0f));
     ImPlot::EndPlot();
   }
 
   // Place the colormap beside the waterfall
   ImGui::SameLine();
-  ImPlot::ColormapScale("##scale", DEFAULT_MIN_DB, DEFAULT_MAX_DB,
+  ImPlot::ColormapScale("##scale", state.min_db, state.max_db,
                         ImVec2(COLORMAP_SCALE_WIDTH, waterfall_height), "%g dB",
                         ImPlotColormapScaleFlags_None, COLORMAP);
 
@@ -239,15 +286,12 @@ int main(int argc, char **argv) {
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init(glsl_version);
 
-  const int frames_per_row =
-      static_cast<int>(std::max(1L, std::lround(iq_file->sample_rate_sps() /
-                                                (FFT_SIZE * ROWS_PER_SECOND))));
-
   // Scoped block is so the waterfall is constructed/destructed on each frame
   {
-    Waterfall waterfall(frames_per_row);
+    Waterfall waterfall;
     AppState state;
     Waterfall::set_colormap(build_colormap(COLORMAP));
+    configure_waterfall(*iq_file, waterfall, state);
 
     // Number of samples that have elapsed in real time but haven't been
     // processed yet
@@ -270,7 +314,7 @@ int main(int argc, char **argv) {
         int rows = 0;
         while (pending_samps >= row_samps && rows < MAX_ROWS_PER_FRAME) {
           iq_file->read(waterfall.input_buffer(), waterfall.row_samples());
-          waterfall.process_row(DEFAULT_MIN_DB, DEFAULT_MAX_DB);
+          waterfall.process_row(state.min_db, state.max_db);
           pending_samps -= row_samps;
           ++rows;
         }

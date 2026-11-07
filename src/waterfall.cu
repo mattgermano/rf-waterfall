@@ -1,6 +1,7 @@
 #include "utilities.hpp"
 #include "waterfall.cuh"
 
+#include <GL/gl.h>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -11,7 +12,9 @@
 #include <cuda_runtime_api.h>
 #include <cufft.h>
 #include <driver_types.h>
+#include <surface_types.h>
 #include <vector>
+#include <vector_functions.h>
 #include <vector_types.h>
 
 // Number of threads per block for each kernel
@@ -36,10 +39,11 @@ __constant__ uchar4 c_colormap[COLORMAP_SIZE]; // NOLINT
 //! @param[out] output The floating point complex output signal with a window
 //! applied
 //! @param[in]  num_samps The number of input samples
+//! @param[in]  fft_size  The number of samples per FFT
 //!
 __global__ void convert_and_window(const short2 *__restrict__ input,
                                    cufftComplex *__restrict__ output,
-                                   std::size_t num_samps) {
+                                   std::size_t num_samps, int fft_size) {
   const std::size_t thread_idx =
       static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
 
@@ -48,7 +52,7 @@ __global__ void convert_and_window(const short2 *__restrict__ input,
   }
 
   // Get the sample number within the FFT length
-  const int n = static_cast<int>(thread_idx % FFT_SIZE);
+  const int n = static_cast<int>(thread_idx % fft_size);
 
   // Apply a Hann window which tapers the ends of the signal to 0. This is
   // needed since an FFT assumes a signal is periodic where both ends of the
@@ -56,7 +60,8 @@ __global__ void convert_and_window(const short2 *__restrict__ input,
   // Reference: https://pysdr.org/content/frequency_domain#windowing
   // Formula: https://en.wikipedia.org/wiki/Window_function#Hann_window
   const float w = 0.5f * (1.0f - std::cosf(2.0f * std::numbers::pi_v<float> *
-                                           static_cast<float>(n) / FFT_SIZE));
+                                           static_cast<float>(n) /
+                                           static_cast<float>(fft_size)));
 
   // Scale the int16 value to the range -1.0 to 1.0 and multiply by the
   // windowing function
@@ -121,40 +126,54 @@ __global__ void compute_magnitude_db(const cufftComplex *__restrict__ spectrum,
 __global__ void apply_colormap(const float *__restrict__ magnitude_db,
                                cudaSurfaceObject_t surface, int fft_size,
                                int row, float min_db, float db_range) {
-  int bin = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int bin = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
 
   if (bin >= fft_size) {
     return;
   }
 
   // Normalize the magnitude to the range 0.0 to 1.0 and look up its color
-  float t = __saturatef((magnitude_db[bin] - min_db) / db_range);
-  int color_idx = __float2int_rn(t * (COLORMAP_SIZE - 1));
+  const float t = __saturatef((magnitude_db[bin] - min_db) / db_range);
+  const int color_idx = __float2int_rn(t * (COLORMAP_SIZE - 1));
 
   surf2Dwrite(c_colormap[color_idx], surface,
               static_cast<int>(bin * sizeof(uchar4)), row);
 }
 
-Waterfall::Waterfall(int frames_per_row) : m_frames_per_row(frames_per_row) {
+Waterfall::Waterfall() {
   checkCudaErrors(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
+}
+
+Waterfall::~Waterfall() {
+  cleanup();
+  checkCudaErrors(cudaStreamDestroy(m_stream));
+}
+
+void Waterfall::configure(int fft_size, int frames_per_row) {
+  cleanup();
+
+  m_fft_size = fft_size;
+  m_frames_per_row = frames_per_row;
+  m_head_row = 0;
 
   checkCudaErrors(cudaMallocHost(&m_h_input, row_samples() * sizeof(short2)));
-  checkCudaErrors(cudaMallocHost(&m_h_magnitude_db, FFT_SIZE * sizeof(float)));
+  checkCudaErrors(
+      cudaMallocHost(&m_h_magnitude_db, m_fft_size * sizeof(float)));
   checkCudaErrors(cudaMalloc(&m_d_input, row_samples() * sizeof(short2)));
   checkCudaErrors(
       cudaMalloc(&m_d_spectrum, row_samples() * sizeof(cufftComplex)));
-  checkCudaErrors(cudaMalloc(&m_d_magnitude_db, FFT_SIZE * sizeof(float)));
-  checkCufftErrors(cufftPlan1d(&m_plan, FFT_SIZE, CUFFT_C2C, frames_per_row));
+  checkCudaErrors(cudaMalloc(&m_d_magnitude_db, m_fft_size * sizeof(float)));
+  checkCufftErrors(cufftPlan1d(&m_plan, m_fft_size, CUFFT_C2C, frames_per_row));
   checkCufftErrors(cufftSetStream(m_plan, m_stream));
 
   // Start with an empty waterfall
-  std::vector<uchar4> blank(static_cast<std::size_t>(FFT_SIZE) * HISTORY_ROWS,
+  std::vector<uchar4> blank(static_cast<std::size_t>(m_fft_size) * HISTORY_ROWS,
                             make_uchar4(0, 0, 0, 255));
 
   glGenTextures(1, &m_texture);
   glBindTexture(GL_TEXTURE_2D, m_texture);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, FFT_SIZE, HISTORY_ROWS, 0, GL_RGBA,
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, m_fft_size, HISTORY_ROWS, 0, GL_RGBA,
                GL_UNSIGNED_BYTE, blank.data());
   glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -163,28 +182,6 @@ Waterfall::Waterfall(int frames_per_row) : m_frames_per_row(frames_per_row) {
   checkCudaErrors(
       cudaGraphicsGLRegisterImage(&m_texture_resource, m_texture, GL_TEXTURE_2D,
                                   cudaGraphicsRegisterFlagsSurfaceLoadStore));
-}
-
-Waterfall::~Waterfall() {
-  checkCudaErrors(cudaStreamSynchronize(m_stream));
-  checkCudaErrors(cudaGraphicsUnregisterResource(m_texture_resource));
-  glDeleteTextures(1, &m_texture);
-  checkCufftErrors(cufftDestroy(m_plan));
-  checkCudaErrors(cudaFreeHost(m_h_input));
-  checkCudaErrors(cudaFreeHost(m_h_magnitude_db));
-  checkCudaErrors(cudaFree(m_d_input));
-  checkCudaErrors(cudaFree(m_d_spectrum));
-  checkCudaErrors(cudaFree(m_d_magnitude_db));
-  m_texture_resource = nullptr;
-  m_texture = 0;
-  m_plan = 0;
-  m_h_input = nullptr;
-  m_h_magnitude_db = nullptr;
-  m_d_input = nullptr;
-  m_d_spectrum = nullptr;
-  m_d_magnitude_db = nullptr;
-
-  checkCudaErrors(cudaStreamDestroy(m_stream));
 }
 
 void Waterfall::set_colormap(
@@ -198,7 +195,7 @@ void Waterfall::process_row(float min_db, float max_db) {
   const dim3 sample_grid(static_cast<unsigned int>(
       cuda::ceil_div(row_samples(), static_cast<std::size_t>(BLOCK_SIZE))));
   const dim3 bin_grid(
-      static_cast<unsigned int>(cuda::ceil_div(FFT_SIZE, BLOCK_SIZE)));
+      static_cast<unsigned int>(cuda::ceil_div(m_fft_size, BLOCK_SIZE)));
 
   // Copy the samples to the device
   checkCudaErrors(cudaMemcpyAsync(m_d_input, m_h_input,
@@ -207,7 +204,7 @@ void Waterfall::process_row(float min_db, float max_db) {
 
   // Convert the signal to floating point and apply windowing function
   convert_and_window<<<sample_grid, block, 0, m_stream>>>(
-      m_d_input, m_d_spectrum, row_samples());
+      m_d_input, m_d_spectrum, row_samples(), m_fft_size);
   checkCudaErrors(cudaGetLastError());
 
   // Execute the FFT on each frame in the row
@@ -216,7 +213,7 @@ void Waterfall::process_row(float min_db, float max_db) {
 
   // Average the frames and convert each frequency bin to dB
   compute_magnitude_db<<<bin_grid, block, 0, m_stream>>>(
-      m_d_spectrum, m_d_magnitude_db, FFT_SIZE, m_frames_per_row);
+      m_d_spectrum, m_d_magnitude_db, m_fft_size, m_frames_per_row);
   checkCudaErrors(cudaGetLastError());
 
   // Draw the newest row at the top
@@ -237,16 +234,42 @@ void Waterfall::process_row(float min_db, float max_db) {
 
   const float db_range = std::fmaxf(max_db - min_db, 1.0e-3f);
   apply_colormap<<<bin_grid, block, 0, m_stream>>>(
-      m_d_magnitude_db, surface, FFT_SIZE, m_head_row, min_db, db_range);
+      m_d_magnitude_db, surface, m_fft_size, m_head_row, min_db, db_range);
   checkCudaErrors(cudaGetLastError());
 
   checkCudaErrors(cudaGraphicsUnmapResources(1, &m_texture_resource, m_stream));
 
   // Copy the dB magnitudes from the device to the host for the spectrum plot
   checkCudaErrors(cudaMemcpyAsync(m_h_magnitude_db, m_d_magnitude_db,
-                                  FFT_SIZE * sizeof(float),
+                                  m_fft_size * sizeof(float),
                                   cudaMemcpyDeviceToHost, m_stream));
 
   checkCudaErrors(cudaStreamSynchronize(m_stream));
   checkCudaErrors(cudaDestroySurfaceObject(surface));
+}
+
+void Waterfall::cleanup() {
+  if (m_fft_size == 0) {
+    return;
+  }
+
+  checkCudaErrors(cudaStreamSynchronize(m_stream));
+  checkCudaErrors(cudaGraphicsUnregisterResource(m_texture_resource));
+  glDeleteTextures(1, &m_texture);
+  checkCufftErrors(cufftDestroy(m_plan));
+  checkCudaErrors(cudaFreeHost(m_h_input));
+  checkCudaErrors(cudaFreeHost(m_h_magnitude_db));
+  checkCudaErrors(cudaFree(m_d_input));
+  checkCudaErrors(cudaFree(m_d_spectrum));
+  checkCudaErrors(cudaFree(m_d_magnitude_db));
+  m_texture_resource = nullptr;
+  m_texture = 0;
+  m_plan = 0;
+  m_h_input = nullptr;
+  m_h_magnitude_db = nullptr;
+  m_d_input = nullptr;
+  m_d_spectrum = nullptr;
+  m_d_magnitude_db = nullptr;
+  m_fft_size = 0;
+  m_frames_per_row = 0;
 }
