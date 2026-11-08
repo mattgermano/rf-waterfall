@@ -34,8 +34,13 @@ static constexpr std::array<const char *, FFT_SIZES.size()> FFT_SIZE_LABELS = {
     "256", "512", "1024", "2048", "4096", "8192", "16384"};
 static constexpr int DEFAULT_FFT_SIZE_IDX = 2;
 
-// Colormap used to color the waterfall
-static constexpr ImPlotColormap COLORMAP = ImPlotColormap_Viridis;
+// Selectable colormaps used to color the waterfall
+static constexpr std::array<int, 6> COLORMAPS = {
+    ImPlotColormap_Viridis, ImPlotColormap_Plasma, ImPlotColormap_Hot,
+    ImPlotColormap_Cool,    ImPlotColormap_Jet,    ImPlotColormap_Twilight};
+static constexpr std::array<const char *, COLORMAPS.size()> COLORMAPS_LABELS = {
+    "Viridis", "Plasma", "Hot", "Cool", "Jet", "Twilight"};
+static constexpr ImPlotColormap DEFAULT_COLORMAP_IDX = 0;
 
 // Target number of waterfall rows per second of signal
 static constexpr double ROWS_PER_SECOND = 50.0;
@@ -57,6 +62,7 @@ static constexpr float COLORMAP_SCALE_WIDTH = 90.0f;
 // State shared between the processing loop and the user interface
 struct AppState {
   int fft_size_idx = DEFAULT_FFT_SIZE_IDX;
+  int colormap_idx = DEFAULT_COLORMAP_IDX;
   float min_db = DEFAULT_MIN_DB;
   float max_db = DEFAULT_MAX_DB;
   bool paused = false;
@@ -149,6 +155,13 @@ void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
     configure_waterfall(iq_file, waterfall, state);
   }
 
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(100.0f);
+  if (ImGui::Combo("Colormap", &state.colormap_idx, COLORMAPS_LABELS.data(),
+                   static_cast<int>(COLORMAPS_LABELS.size()))) {
+    Waterfall::set_colormap(build_colormap(COLORMAPS[state.colormap_idx]));
+  }
+
   const double row_duration_s =
       static_cast<double>(waterfall.row_samples()) / iq_file.sample_rate_sps();
   const double history_s = row_duration_s * HISTORY_ROWS;
@@ -197,7 +210,8 @@ void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
   ImGui::SameLine();
   ImPlot::ColormapScale("##scale", state.min_db, state.max_db,
                         ImVec2(COLORMAP_SCALE_WIDTH, waterfall_height), "%g dB",
-                        ImPlotColormapScaleFlags_None, COLORMAP);
+                        ImPlotColormapScaleFlags_None,
+                        COLORMAPS[state.colormap_idx]);
 
   ImGui::End();
 }
@@ -291,7 +305,7 @@ int main(int argc, char **argv) {
   {
     Waterfall waterfall;
     AppState state;
-    Waterfall::set_colormap(build_colormap(COLORMAP));
+    Waterfall::set_colormap(build_colormap(COLORMAPS[state.colormap_idx]));
     configure_waterfall(*iq_file, waterfall, state);
 
     // Number of samples that have elapsed in real time but haven't been
