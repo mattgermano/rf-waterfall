@@ -153,6 +153,11 @@ void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
       static_cast<double>(waterfall.row_samples()) / iq_file.sample_rate_sps();
   const double history_s = row_duration_s * HISTORY_ROWS;
 
+  const std::string info = std::format(
+      "Sample rate: {:.2f} Msps | Center: {:.2f} MHz",
+      iq_file.sample_rate_sps() / 1.0e6, iq_file.center_freq_hz() / 1.0e6);
+  ImGui::TextUnformatted(info.c_str());
+
   const ImVec2 avail = ImGui::GetContentRegionAvail();
   const float plot_width =
       avail.x - COLORMAP_SCALE_WIDTH - ImGui::GetStyle().ItemSpacing.x;
@@ -231,10 +236,6 @@ int main(int argc, char **argv) {
   if (!iq_file) {
     return EXIT_FAILURE;
   }
-
-  std::cout << std::format("Center Freq: {} MHz, Sample Rate: {} Sps\n",
-                           iq_file->center_freq_hz() / 1e6,
-                           iq_file->sample_rate_sps());
 
   // Setup error callback
   glfwSetErrorCallback(glfw_error_callback);
