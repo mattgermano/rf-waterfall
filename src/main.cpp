@@ -284,7 +284,7 @@ int main(int argc, char **argv) {
     return -1;
   }
   glfwMakeContextCurrent(window);
-  glfwSwapInterval(0); // Disable vsync
+  glfwSwapInterval(1);
 
   // Setup context
   IMGUI_CHECKVERSION();
