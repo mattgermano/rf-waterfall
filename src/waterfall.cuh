@@ -27,6 +27,13 @@ public:
   Waterfall(Waterfall &&) = delete;
   Waterfall &operator=(Waterfall &&) = delete;
 
+  //!
+  //! @brief Allocates the buffers, FFT plan and texture for a given FFT size.
+  //! Any existing waterfall history is cleared.
+  //!
+  //! @param[in] fft_size       The number of samples per FFT
+  //! @param[in] frames_per_row The number of FFT frames averaged into each row
+  //!
   void configure(int fft_size, int frames_per_row);
 
   //!
@@ -36,23 +43,58 @@ public:
   //!
   static void set_colormap(const std::array<uchar4, COLORMAP_SIZE> &colormap);
 
+  //!
+  //! @brief Processes the samples in the input buffer and writes them as a new
+  //! row at the top of the waterfall.
+  //!
+  //! @param[in] min_db The dB value mapped to the lowest color
+  //! @param[in] max_db The dB value mapped to the highest color
+  //!
   void process_row(float min_db, float max_db);
 
+  //!
+  //! @return The magnitude in dB of each frequency bin in the latest row,
+  //! ordered from the lowest to highest frequency
+  //!
   [[nodiscard]] const float *magnitude_db() const { return m_h_magnitude_db; }
 
+  //!
+  //! @return Pinned host buffer that holds row_samples() samples for the next
+  //! call to process_row()
+  //!
   [[nodiscard]] short2 *input_buffer() const { return m_h_input; }
 
+  //!
+  //! @return The OpenGL texture containing the waterfall
+  //!
+  [[nodiscard]] GLuint texture() const { return m_texture; }
+
+  //!
+  //! @return The texture row containing the latest spectrum
+  //!
+  [[nodiscard]] int head_row() const { return m_head_row; }
+
+  //!
+  //! @return The currently configured FFT size in samples
+  //!
+  [[nodiscard]] int fft_size() const { return m_fft_size; }
+
+  //!
+  //! @return The number of FFT frames averaged into each row
+  //!
+  [[nodiscard]] int frames_per_row() const { return m_frames_per_row; }
+
+  //!
+  //! @return The number of samples averaged into each row
+  //!
   [[nodiscard]] std::size_t row_samples() const {
     return static_cast<std::size_t>(m_fft_size) * m_frames_per_row;
   }
 
-  [[nodiscard]] GLuint texture() const { return m_texture; }
-
-  [[nodiscard]] int head_row() const { return m_head_row; }
-
-  [[nodiscard]] int fft_size() const { return m_fft_size; }
-
 private:
+  //!
+  //! @brief Frees the buffers, FFT plan and texture
+  //!
   void cleanup();
 
   cudaStream_t m_stream = nullptr;
