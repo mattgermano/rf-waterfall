@@ -162,6 +162,12 @@ void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
     Waterfall::set_colormap(build_colormap(COLORMAPS[state.colormap_idx]));
   }
 
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(250.0f);
+  ImGui::DragFloatRange2("dB Range", &state.min_db, &state.max_db, 0.5f,
+                         -200.0f, 50.0f, "%.1f dB", "%.1f dB",
+                         ImGuiSliderFlags_AlwaysClamp);
+
   const double row_duration_s =
       static_cast<double>(waterfall.row_samples()) / iq_file.sample_rate_sps();
   const double history_s = row_duration_s * HISTORY_ROWS;
@@ -273,6 +279,7 @@ int main(int argc, char **argv) {
   const char *glsl_version = "#version 130";
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+  // glfwWindowHint(GLFW_CONTEXT_CREATION_API, GLFW_EGL_CONTEXT_API);
 #endif
 
   // Create window
