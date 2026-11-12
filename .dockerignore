@@ -1,0 +1,6 @@
+*
+!src/
+!meson.build
+!conan.lock
+!conanfile.py
+!Makefile

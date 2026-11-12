@@ -1,0 +1,13 @@
+services:
+  rf-waterfall:
+    build:
+      context: .
+    image: rf-waterfall:latest
+    container_name: rf-waterfall
+    environment:
+      DISPLAY:
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ./data:/app/data
+    command: ["/app/data/LTE_uplink_847MHz_2022-01-30_30720ksps.sigmf-meta"]
+    gpus: all
