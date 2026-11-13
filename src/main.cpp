@@ -149,6 +149,12 @@ void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
   }
 
   ImGui::SameLine();
+  if (ImGui::Button("Reset Zoom")) {
+    state.freq_min_mhz = state.image_min_mhz;
+    state.freq_max_mhz = state.image_max_mhz;
+  }
+
+  ImGui::SameLine();
   ImGui::SetNextItemWidth(100.0f);
   if (ImGui::Combo("FFT Size", &state.fft_size_idx, FFT_SIZE_LABELS.data(),
                    static_cast<int>(FFT_SIZE_LABELS.size()))) {
