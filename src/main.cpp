@@ -61,6 +61,9 @@ static constexpr float SPECTRUM_HEIGHT_RATIO = 0.3f;
 // Width of the colormap scale beside the waterfall in pixels
 static constexpr float COLORMAP_SCALE_WIDTH = 90.0f;
 
+// Horizontal gap between each control and the label of the next in pixels
+static constexpr float CONTROL_GROUP_SPACING = 20.0f;
+
 // State shared between the processing loop and the user interface
 struct AppState {
   int fft_size_idx = DEFAULT_FFT_SIZE_IDX;
@@ -137,6 +140,27 @@ void configure_waterfall(const SigmfFile &iq_file, Waterfall &waterfall,
 }
 
 //!
+//! @brief Places a label to the left of the next control on the current line
+//!
+//! @param[in] label The text of the label
+//! @param[in] width The width of the next control in pixels
+//!
+void left_label(const char *label, float width) {
+  const float line_end_x =
+      ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+  const float group_width = CONTROL_GROUP_SPACING +
+                            ImGui::CalcTextSize(label).x +
+                            ImGui::GetStyle().ItemSpacing.x + width;
+  if (ImGui::GetItemRectMax().x + group_width <= line_end_x) {
+    ImGui::SameLine(0.0f, CONTROL_GROUP_SPACING);
+  }
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted(label);
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(width);
+}
+
+//!
 //! @brief Draws the controls, spectrum plot and waterfall
 //!
 void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
@@ -157,32 +181,28 @@ void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
     state.freq_max_mhz = state.image_max_mhz;
   }
 
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(100.0f);
-  if (ImGui::Combo("FFT Size", &state.fft_size_idx, FFT_SIZE_LABELS.data(),
+  left_label("FFT size", 100.0f);
+  if (ImGui::Combo("##fft_size", &state.fft_size_idx, FFT_SIZE_LABELS.data(),
                    static_cast<int>(FFT_SIZE_LABELS.size()))) {
     configure_waterfall(iq_file, waterfall, state);
   }
 
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(150.0f);
-  ImGui::SliderInt("Rows/s", &state.rows_per_second, MIN_ROWS_PER_SECOND,
-                   MAX_ROWS_PER_SECOND, "%d",
+  left_label("Rows/s", 150.0f);
+  ImGui::SliderInt("##rows_per_second", &state.rows_per_second,
+                   MIN_ROWS_PER_SECOND, MAX_ROWS_PER_SECOND, "%d",
                    ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
   if (ImGui::IsItemDeactivatedAfterEdit()) {
     configure_waterfall(iq_file, waterfall, state);
   }
 
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(100.0f);
-  if (ImGui::Combo("Colormap", &state.colormap_idx, COLORMAPS_LABELS.data(),
+  left_label("Colormap", 100.0f);
+  if (ImGui::Combo("##colormap", &state.colormap_idx, COLORMAPS_LABELS.data(),
                    static_cast<int>(COLORMAPS_LABELS.size()))) {
     Waterfall::set_colormap(build_colormap(COLORMAPS[state.colormap_idx]));
   }
 
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(250.0f);
-  ImGui::DragFloatRange2("dB Range", &state.min_db, &state.max_db, 0.5f,
+  left_label("dB range", 250.0f);
+  ImGui::DragFloatRange2("##db_range", &state.min_db, &state.max_db, 0.5f,
                          -200.0f, 50.0f, "%.1f dB", "%.1f dB",
                          ImGuiSliderFlags_AlwaysClamp);
 
@@ -191,7 +211,7 @@ void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
   const double history_s = row_duration_s * HISTORY_ROWS;
 
   const std::string info = std::format(
-      "Sample rate: {:.2f} Msps | Center: {:.2f} MHz",
+      "Sample rate: {:.2f} Msps | Center frequency: {:.2f} MHz",
       iq_file.sample_rate_sps() / 1.0e6, iq_file.center_freq_hz() / 1.0e6);
   ImGui::TextUnformatted(info.c_str());
 
