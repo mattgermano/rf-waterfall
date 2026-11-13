@@ -3,6 +3,8 @@
 This project contains the source code for the Introduction to GPU programming
 final project.
 
+https://github.com/user-attachments/assets/6b742f96-8a20-4ee0-8c88-97d5455d4d55
+
 ## Prerequisites
 
 1. Linux system with an NVIDIA GPU
