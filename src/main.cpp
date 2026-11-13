@@ -43,7 +43,9 @@ static constexpr std::array<const char *, COLORMAPS.size()> COLORMAPS_LABELS = {
 static constexpr ImPlotColormap DEFAULT_COLORMAP_IDX = 0;
 
 // Target number of waterfall rows per second of signal
-static constexpr double ROWS_PER_SECOND = 50.0;
+static constexpr int DEFAULT_ROWS_PER_SECOND = 50;
+static constexpr int MIN_ROWS_PER_SECOND = 1;
+static constexpr int MAX_ROWS_PER_SECOND = 500;
 
 // Limits the rows processed in a single UI frame so the app doesn't fall
 // further behind if a frame is delayed (e.g., while the window is dragged)
@@ -62,6 +64,7 @@ static constexpr float COLORMAP_SCALE_WIDTH = 90.0f;
 // State shared between the processing loop and the user interface
 struct AppState {
   int fft_size_idx = DEFAULT_FFT_SIZE_IDX;
+  int rows_per_second = DEFAULT_ROWS_PER_SECOND;
   int colormap_idx = DEFAULT_COLORMAP_IDX;
   float min_db = DEFAULT_MIN_DB;
   float max_db = DEFAULT_MAX_DB;
@@ -107,7 +110,7 @@ std::array<uchar4, COLORMAP_SIZE> build_colormap(ImPlotColormap cmap) {
 }
 
 //!
-//! @brief Configures the waterfall for the selected FFT size
+//! @brief Configures the waterfall for the selected FFT size and row rate
 //!
 //! @param[in]     iq_file   The input file
 //! @param[in,out] waterfall The waterfall to configure
@@ -118,8 +121,8 @@ void configure_waterfall(const SigmfFile &iq_file, Waterfall &waterfall,
   const int fft_size = FFT_SIZES[state.fft_size_idx];
   const double sample_rate = iq_file.sample_rate_sps();
 
-  const int frames_per_row = static_cast<int>(
-      std::max(1L, std::lround(sample_rate / (fft_size * ROWS_PER_SECOND))));
+  const int frames_per_row = static_cast<int>(std::max(
+      1L, std::lround(sample_rate / (fft_size * state.rows_per_second))));
   waterfall.configure(fft_size, frames_per_row);
 
   state.bin_width_mhz = sample_rate / fft_size / 1.0e6;
@@ -158,6 +161,15 @@ void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
   ImGui::SetNextItemWidth(100.0f);
   if (ImGui::Combo("FFT Size", &state.fft_size_idx, FFT_SIZE_LABELS.data(),
                    static_cast<int>(FFT_SIZE_LABELS.size()))) {
+    configure_waterfall(iq_file, waterfall, state);
+  }
+
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(150.0f);
+  ImGui::SliderInt("Rows/s", &state.rows_per_second, MIN_ROWS_PER_SECOND,
+                   MAX_ROWS_PER_SECOND, "%d",
+                   ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
+  if (ImGui::IsItemDeactivatedAfterEdit()) {
     configure_waterfall(iq_file, waterfall, state);
   }
 
