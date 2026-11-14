@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y \
   wget \
   pkg-config \
   python3 \
-  sudo \
   && rm -rf /var/lib/apt/lists/* \
   && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
@@ -19,12 +18,22 @@ ARG CONAN_VERSION=2.34.0
 RUN wget https://github.com/conan-io/conan/releases/download/$CONAN_VERSION/conan-$CONAN_VERSION-amd64.deb \
   && dpkg -i conan-$CONAN_VERSION-amd64.deb
 
+COPY conanfile.py conan.lock ./
+
+RUN conan profile detect --force \
+  && conan install . \
+    --output-folder=build \
+    --build=missing \
+    -c tools.system.package_manager:mode=install \
+    -s compiler.cppstd=23
+
 COPY src ./src
-COPY Makefile meson.build conanfile.py conan.lock ./
+COPY meson.build ./
 ENV PATH=/usr/local/cuda/bin:$PATH
 
-RUN conan profile detect --force && \
-  make build
+RUN . build/conanbuild.sh \
+  && meson setup --native-file build/conan_meson_native.ini build . \
+  && ninja -C build
 
 RUN useradd app
 USER app
