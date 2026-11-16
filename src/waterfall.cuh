@@ -7,15 +7,11 @@
 #ifndef WATERFALL_CUH
 #define WATERFALL_CUH
 
+#include "configuration.hpp"
+
 #include <GL/gl.h>
 #include <cstddef>
 #include <cufft.h>
-
-// Number of rows in the waterfall texture
-static constexpr int HISTORY_ROWS = 1024;
-
-// Number of colors in the lookup table used to color each frequency bin
-static constexpr int COLORMAP_SIZE = 256; // 8-bit
 
 class Waterfall {
 public:

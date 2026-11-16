@@ -1,3 +1,8 @@
+//!
+//! @file utilities.hpp
+//! @brief Helper functions for checking for CUDA errors
+//!
+
 #ifndef UTILITIES_HPP
 #define UTILITIES_HPP
 
