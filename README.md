@@ -65,6 +65,16 @@ docker compose up --build; docker compose down
 xhost -local:docker
 ```
 
+The playback file can be controlled by editing the `command` in the
+[`compose.yaml`](./compose.yaml) file at the root of the repository. It
+currently defaults to the LTE uplink file:
+
+```yaml
+command: ["/app/data/LTE_uplink_847MHz_2022-01-30_30720ksps.sigmf-meta"]
+```
+
+Other RF recordings can be found here: https://destevez.net/rf-recordings/
+
 ## Basic Workflow
 
 The basic process for converting the raw I/Q data to a waterfall plot is
@@ -91,7 +101,7 @@ approach and implements the core GPU code using CUDA, OpenGL, and cuFFT.
 
 1. Plot the OpenGL texture.
 
-The project leverages [CUDA’s interoperability with
+The project leverages [CUDA's interoperability with
 OpenGL](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/graphics-interop.html#opengl-interoperability)
 to map OpenGL resources directly into the CUDA address space. To render the
 OpenGL texture, the project uses the [ImGui](https://github.com/ocornut/imgui)
