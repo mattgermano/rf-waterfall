@@ -34,6 +34,15 @@ static constexpr std::array<const char *, FFT_SIZES.size()> FFT_SIZE_LABELS = {
     "256", "512", "1024", "2048", "4096", "8192", "16384"};
 static constexpr int DEFAULT_FFT_SIZE_IDX = 2;
 
+// Selectable overlap between consecutive FFT frames in percent. Applying the
+// windowing function has a side effect of attenuating samples at the beginning
+// and end of each frame. Overlapping the samples between frames ensures they
+// are not lost.
+static constexpr std::array<int, 4> OVERLAPS = {0, 25, 50, 75};
+static constexpr std::array<const char *, OVERLAPS.size()> OVERLAP_LABELS = {
+    "0%", "25%", "50%", "75%"};
+static constexpr int DEFAULT_OVERLAP_IDX = 2;
+
 // Selectable colormaps used to color the waterfall
 static constexpr std::array<int, 6> COLORMAPS = {
     ImPlotColormap_Viridis, ImPlotColormap_Plasma, ImPlotColormap_Hot,
@@ -67,6 +76,7 @@ static constexpr float CONTROL_GROUP_SPACING = 20.0f;
 // State shared between the processing loop and the user interface
 struct AppState {
   int fft_size_idx = DEFAULT_FFT_SIZE_IDX;
+  int overlap_idx = DEFAULT_OVERLAP_IDX;
   int rows_per_second = DEFAULT_ROWS_PER_SECOND;
   int colormap_idx = DEFAULT_COLORMAP_IDX;
   float min_db = DEFAULT_MIN_DB;
@@ -122,11 +132,12 @@ std::array<uchar4, COLORMAP_SIZE> build_colormap(ImPlotColormap cmap) {
 void configure_waterfall(const SigmfFile &iq_file, Waterfall &waterfall,
                          AppState &state) {
   const int fft_size = FFT_SIZES[state.fft_size_idx];
+  const int hop_size = fft_size * (100 - OVERLAPS[state.overlap_idx]) / 100;
   const double sample_rate = iq_file.sample_rate_sps();
 
   const int frames_per_row = static_cast<int>(std::max(
-      1L, std::lround(sample_rate / (fft_size * state.rows_per_second))));
-  waterfall.configure(fft_size, frames_per_row);
+      1L, std::lround(sample_rate / (hop_size * state.rows_per_second))));
+  waterfall.configure(fft_size, hop_size, frames_per_row);
 
   state.bin_width_mhz = sample_rate / fft_size / 1.0e6;
   state.first_bin_mhz =
@@ -184,6 +195,12 @@ void draw_ui(const SigmfFile &iq_file, Waterfall &waterfall, AppState &state) {
   left_label("FFT size", 100.0f);
   if (ImGui::Combo("##fft_size", &state.fft_size_idx, FFT_SIZE_LABELS.data(),
                    static_cast<int>(FFT_SIZE_LABELS.size()))) {
+    configure_waterfall(iq_file, waterfall, state);
+  }
+
+  left_label("Overlap", 70.0f);
+  if (ImGui::Combo("##overlap", &state.overlap_idx, OVERLAP_LABELS.data(),
+                   static_cast<int>(OVERLAP_LABELS.size()))) {
     configure_waterfall(iq_file, waterfall, state);
   }
 

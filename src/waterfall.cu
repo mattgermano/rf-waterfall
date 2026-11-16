@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <cuComplex.h>
 #include <cuda/cmath>
 #include <cuda_gl_interop.h>
@@ -35,24 +36,28 @@ __constant__ uchar4 c_colormap[COLORMAP_SIZE]; // NOLINT
 //! @brief Converts a complex int16 input signal to complex floating point and
 //! applies a Hann windowing function.
 //!
-//! @param[in]  input  The int16 complex input signal
-//! @param[out] output The floating point complex output signal with a window
-//! applied
-//! @param[in]  num_samps The number of input samples
-//! @param[in]  fft_size  The number of samples per FFT
+//! @param[in]  input       The int16 complex input signal
+//! @param[out] output      The floating point complex output signal with a
+//! window applied
+//! @param[in]  num_outputs The number of output samples (frames * FFT size)
+//! @param[in]  fft_size    The number of samples per FFT
+//! @param[in]  hop_size    The number of samples between the start of frames
 //!
 __global__ void convert_and_window(const short2 *__restrict__ input,
                                    cufftComplex *__restrict__ output,
-                                   std::size_t num_samps, int fft_size) {
+                                   std::size_t num_outputs, int fft_size,
+                                   int hop_size) {
   const std::size_t thread_idx =
       static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
 
-  if (thread_idx >= num_samps) {
+  if (thread_idx >= num_outputs) {
     return;
   }
 
-  // Get the sample number within the FFT length
+  // Get the frame and sample number within the FFT length
+  const std::size_t frame = thread_idx / fft_size;
   const int n = static_cast<int>(thread_idx % fft_size);
+  const short2 sample = input[frame * hop_size + n];
 
   // Apply a Hann window which tapers the ends of the signal to 0. This is
   // needed since an FFT assumes a signal is periodic where both ends of the
@@ -65,9 +70,9 @@ __global__ void convert_and_window(const short2 *__restrict__ input,
 
   // Scale the int16 value to the range -1.0 to 1.0 and multiply by the
   // windowing function
-  output[thread_idx] = make_cuFloatComplex(
-      static_cast<float>(input[thread_idx].x) * INT16_SCALE * w,
-      static_cast<float>(input[thread_idx].y) * INT16_SCALE * w);
+  output[thread_idx] =
+      make_cuFloatComplex(static_cast<float>(sample.x) * INT16_SCALE * w,
+                          static_cast<float>(sample.y) * INT16_SCALE * w);
 }
 
 //!
@@ -149,22 +154,28 @@ Waterfall::~Waterfall() {
   checkCudaErrors(cudaStreamDestroy(m_stream));
 }
 
-void Waterfall::configure(int fft_size, int frames_per_row) {
+void Waterfall::configure(int fft_size, int hop_size, int frames_per_row) {
   cleanup();
 
   m_fft_size = fft_size;
+  m_hop_size = hop_size;
   m_frames_per_row = frames_per_row;
   m_head_row = 0;
 
-  checkCudaErrors(cudaMallocHost(&m_h_input, row_samples() * sizeof(short2)));
+  const std::size_t num_frame_samps =
+      static_cast<std::size_t>(fft_size) * frames_per_row;
+  checkCudaErrors(cudaMallocHost(&m_h_input, input_samples() * sizeof(short2)));
+  checkCudaErrors(cudaMallocHost(&m_h_magnitude_db, fft_size * sizeof(float)));
+  checkCudaErrors(cudaMalloc(&m_d_input, input_samples() * sizeof(short2)));
   checkCudaErrors(
-      cudaMallocHost(&m_h_magnitude_db, m_fft_size * sizeof(float)));
-  checkCudaErrors(cudaMalloc(&m_d_input, row_samples() * sizeof(short2)));
-  checkCudaErrors(
-      cudaMalloc(&m_d_spectrum, row_samples() * sizeof(cufftComplex)));
-  checkCudaErrors(cudaMalloc(&m_d_magnitude_db, m_fft_size * sizeof(float)));
-  checkCufftErrors(cufftPlan1d(&m_plan, m_fft_size, CUFFT_C2C, frames_per_row));
+      cudaMalloc(&m_d_spectrum, num_frame_samps * sizeof(cufftComplex)));
+  checkCudaErrors(cudaMalloc(&m_d_magnitude_db, fft_size * sizeof(float)));
+  checkCufftErrors(cufftPlan1d(&m_plan, fft_size, CUFFT_C2C, frames_per_row));
   checkCufftErrors(cufftSetStream(m_plan, m_stream));
+
+  // There is no previous row to overlap with so the first frame needs to start
+  // with 0
+  std::memset(m_h_input, 0, overlap_samples() * sizeof(short2));
 
   // Start with an empty waterfall
   std::vector<uchar4> blank(static_cast<std::size_t>(m_fft_size) * HISTORY_ROWS,
@@ -192,19 +203,21 @@ void Waterfall::set_colormap(
 
 void Waterfall::process_row(float min_db, float max_db) {
   const dim3 block(BLOCK_SIZE);
+  const std::size_t num_frame_samps =
+      static_cast<std::size_t>(m_fft_size) * m_frames_per_row;
   const dim3 sample_grid(static_cast<unsigned int>(
-      cuda::ceil_div(row_samples(), static_cast<std::size_t>(BLOCK_SIZE))));
+      cuda::ceil_div(num_frame_samps, static_cast<std::size_t>(BLOCK_SIZE))));
   const dim3 bin_grid(
       static_cast<unsigned int>(cuda::ceil_div(m_fft_size, BLOCK_SIZE)));
 
   // Copy the samples to the device
   checkCudaErrors(cudaMemcpyAsync(m_d_input, m_h_input,
-                                  row_samples() * sizeof(short2),
+                                  input_samples() * sizeof(short2),
                                   cudaMemcpyHostToDevice, m_stream));
 
   // Convert the signal to floating point and apply windowing function
   convert_and_window<<<sample_grid, block, 0, m_stream>>>(
-      m_d_input, m_d_spectrum, row_samples(), m_fft_size);
+      m_d_input, m_d_spectrum, num_frame_samps, m_fft_size, m_hop_size);
   checkCudaErrors(cudaGetLastError());
 
   // Execute the FFT on each frame in the row
@@ -246,6 +259,10 @@ void Waterfall::process_row(float min_db, float max_db) {
 
   checkCudaErrors(cudaStreamSynchronize(m_stream));
   checkCudaErrors(cudaDestroySurfaceObject(surface));
+
+  // Keep the end of this row so the first frame of the next row overlaps it
+  std::memmove(m_h_input, m_h_input + row_samples(),
+               overlap_samples() * sizeof(short2));
 }
 
 void Waterfall::cleanup() {
@@ -271,5 +288,6 @@ void Waterfall::cleanup() {
   m_d_spectrum = nullptr;
   m_d_magnitude_db = nullptr;
   m_fft_size = 0;
+  m_hop_size = 0;
   m_frames_per_row = 0;
 }

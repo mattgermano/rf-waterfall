@@ -32,9 +32,11 @@ public:
   //! Any existing waterfall history is cleared.
   //!
   //! @param[in] fft_size       The number of samples per FFT
+  //! @param[in] hop_size       The number of samples between the start of
+  //! consecutive FFT frames
   //! @param[in] frames_per_row The number of FFT frames averaged into each row
   //!
-  void configure(int fft_size, int frames_per_row);
+  void configure(int fft_size, int hop_size, int frames_per_row);
 
   //!
   //! @brief Sets the colors used to map a dB value to a pixel
@@ -62,7 +64,9 @@ public:
   //! @return Pinned host buffer that holds row_samples() samples for the next
   //! call to process_row()
   //!
-  [[nodiscard]] short2 *input_buffer() const { return m_h_input; }
+  [[nodiscard]] short2 *input_buffer() const {
+    return m_h_input + overlap_samples();
+  }
 
   //!
   //! @return The OpenGL texture containing the waterfall
@@ -80,6 +84,11 @@ public:
   [[nodiscard]] int fft_size() const { return m_fft_size; }
 
   //!
+  //! @return The number of samples between the start of consecutive FFT frames
+  //!
+  [[nodiscard]] int hop_size() const { return m_hop_size; }
+
+  //!
   //! @return The number of FFT frames averaged into each row
   //!
   [[nodiscard]] int frames_per_row() const { return m_frames_per_row; }
@@ -88,10 +97,25 @@ public:
   //! @return The number of samples averaged into each row
   //!
   [[nodiscard]] std::size_t row_samples() const {
-    return static_cast<std::size_t>(m_fft_size) * m_frames_per_row;
+    return static_cast<std::size_t>(m_hop_size) * m_frames_per_row;
   }
 
 private:
+  //!
+  //! @return The number of samples at the end of a row that are reused by the
+  //! first frame of the next row
+  //!
+  [[nodiscard]] std::size_t overlap_samples() const {
+    return static_cast<std::size_t>(m_fft_size - m_hop_size);
+  }
+
+  //!
+  //! @return The total number of samples spanned by the frames of a row
+  //!
+  [[nodiscard]] std::size_t input_samples() const {
+    return overlap_samples() + row_samples();
+  }
+
   //!
   //! @brief Frees the buffers, FFT plan and texture
   //!
@@ -107,6 +131,7 @@ private:
   GLuint m_texture = 0;
   cudaGraphicsResource_t m_texture_resource = nullptr;
   int m_fft_size = 0;
+  int m_hop_size = 0;
   int m_frames_per_row = 0;
   int m_head_row = 0;
 };
