@@ -15,8 +15,9 @@ project(
   },
 )
 
+nvcc = meson.get_compiler('cuda')
 cuda = import('unstable-cuda')
-cuda_args = [cuda.nvcc_arch_flags('13.4', 'Lovelace')]
+cuda_args = [cuda.nvcc_arch_flags(nvcc, 'All')]
 
 rf_waterfall_srcs = files(
   'src/main.cpp',
